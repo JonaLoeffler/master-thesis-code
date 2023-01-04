@@ -1,0 +1,6 @@
+[submodule "tree-sitter-sparql"]
+	path = tree-sitter-sparql
+	url = git@github.com:JonaLoeffler/tree-sitter-sparql.git
+[submodule "tree-sitter-turtle"]
+	path = tree-sitter-turtle
+	url = git@github.com:JonaLoeffler/tree-sitter-turtle.git
