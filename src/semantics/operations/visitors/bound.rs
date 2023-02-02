@@ -15,8 +15,8 @@ impl BoundVars {
     }
 }
 
-impl<'a, S, J, M, L> OperationVisitor<'a, S, J, M, L, HashSet<query::Variable>> for BoundVars {
-    fn visit_scan(&mut self, o: &'a Scan<S, J, M, L>) -> HashSet<query::Variable> {
+impl<'a> OperationVisitor<'a, HashSet<query::Variable>> for BoundVars {
+    fn visit_scan(&mut self, o: &'a Scan) -> HashSet<query::Variable> {
         let mut result = HashSet::new();
 
         if let query::Subject::V(v) = &o.subject {
@@ -34,56 +34,44 @@ impl<'a, S, J, M, L> OperationVisitor<'a, S, J, M, L, HashSet<query::Variable>> 
         result
     }
 
-    fn visit_join(&mut self, o: &Join<J, Operation<'a, S, J, M, L>>) -> HashSet<query::Variable> {
-        let left = self.visit(&*o.left);
-        let right = self.visit(&*o.right);
+    fn visit_join(&mut self, o: &Join<Operation<'a>>) -> HashSet<query::Variable> {
+        let left = self.visit(&o.left);
+        let right = self.visit(&o.right);
 
         left.union(&right).cloned().collect()
     }
 
-    fn visit_projection(
-        &mut self,
-        o: &Projection<Operation<'a, S, J, M, L>>,
-    ) -> HashSet<query::Variable> {
-        self.visit(&*o.operation)
+    fn visit_projection(&mut self, o: &Projection<Operation<'a>>) -> HashSet<query::Variable> {
+        self.visit(&o.operation)
             .intersection(&o.vars.iter().cloned().collect())
             .cloned()
             .collect()
     }
 
-    fn visit_union(&mut self, o: &Union<Operation<'a, S, J, M, L>>) -> HashSet<query::Variable> {
+    fn visit_union(&mut self, o: &Union<Operation<'a>>) -> HashSet<query::Variable> {
         let left = self.visit(&o.left);
         let right = self.visit(&o.right);
 
         left.intersection(&right).cloned().collect()
     }
 
-    fn visit_filter(
-        &mut self,
-        o: &'a Filter<Operation<'a, S, J, M, L>>,
-    ) -> HashSet<query::Variable> {
+    fn visit_filter(&mut self, o: &'a Filter<Operation<'a>>) -> HashSet<query::Variable> {
         self.visit(&o.operation)
     }
 
-    fn visit_leftjoin(
-        &mut self,
-        o: &'a LeftJoin<Operation<'a, S, J, M, L>>,
-    ) -> HashSet<query::Variable> {
+    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a>>) -> HashSet<query::Variable> {
         self.visit(&o.operation)
     }
 
-    fn visit_minus(
-        &mut self,
-        o: &'a Minus<M, Operation<'a, S, J, M, L>>,
-    ) -> HashSet<query::Variable> {
+    fn visit_minus(&mut self, o: &'a Minus<Operation<'a>>) -> HashSet<query::Variable> {
         self.visit(&o.left)
     }
 
-    fn visit_offset(&mut self, o: &Offset<Operation<'a, S, J, M, L>>) -> HashSet<query::Variable> {
+    fn visit_offset(&mut self, o: &Offset<Operation<'a>>) -> HashSet<query::Variable> {
         self.visit(&o.operation)
     }
 
-    fn visit_limit(&mut self, o: &Limit<L, Operation<'a, S, J, M, L>>) -> HashSet<query::Variable> {
+    fn visit_limit(&mut self, o: &Limit<Operation<'a>>) -> HashSet<query::Variable> {
         self.visit(&o.operation)
     }
 }

@@ -1,52 +1,31 @@
 use core::fmt;
-use std::marker::PhantomData;
+
+use std::hash::Hash;
 
 use crate::{
     semantics::{
-        mapping::{Mapping, MappingSet},
-        selectivity::{Selectivity, SelectivityError},
+        mapping::Mapping,
+        selectivity::{Selectivity, SelectivityResult},
     },
     syntax::{database, query},
 };
 
-use super::{visitors::bound::BoundVars, Execute, OperationVisitor};
-
-pub(crate) type NewScan<'a, S, J, M, L> = fn(
-    &'a database::Database,
-    query::Subject,
-    query::Predicate,
-    query::Object,
-) -> Scan<'a, S, J, M, L>;
+use super::{
+    visitors::{condition, printer::Printer},
+    OperationVisitor,
+};
 
 #[derive(Debug)]
-pub(crate) struct Scan<'a, S, J, M, L> {
+pub(crate) struct Scan<'a> {
     pub(super) db: &'a database::Database,
     pub(super) subject: query::Subject,
     pub(super) predicate: query::Predicate,
     pub(super) object: query::Object,
-    kind: S,
-    phantom_join: PhantomData<J>,
-    phantom_minus: PhantomData<M>,
-    phantom_limit: PhantomData<L>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CollScan;
-
-#[derive(Debug, Clone)]
-pub(crate) struct IterScan<'a> {
     iter: std::iter::Cloned<std::slice::Iter<'a, database::Triple>>,
 }
 
-impl<'a> Eq for IterScan<'a> {}
-impl<'a> PartialEq for IterScan<'a> {
-    fn eq(&self, _other: &Self) -> bool {
-        false
-    }
-}
-
-impl<'a, J, M, L> Scan<'a, CollScan, J, M, L> {
-    pub(crate) fn collection(
+impl<'a> Scan<'a> {
+    pub(crate) fn new(
         db: &'a database::Database,
         subject: query::Subject,
         predicate: query::Predicate,
@@ -57,53 +36,25 @@ impl<'a, J, M, L> Scan<'a, CollScan, J, M, L> {
             subject,
             predicate,
             object,
-            kind: CollScan,
-            phantom_join: PhantomData,
-            phantom_minus: PhantomData,
-            phantom_limit: PhantomData,
+            iter: db.triples().iter().cloned(),
         }
     }
 }
 
-impl<'a, J, M, L> Scan<'a, IterScan<'a>, J, M, L> {
-    pub(crate) fn iterator(
-        db: &'a database::Database,
-        subject: query::Subject,
-        predicate: query::Predicate,
-        object: query::Object,
-    ) -> Self {
-        Self {
-            db,
-            subject,
-            predicate,
-            object,
-            kind: IterScan {
-                iter: db.triples().iter().cloned(),
-            },
-            phantom_join: PhantomData,
-            phantom_minus: PhantomData,
-            phantom_limit: PhantomData,
-        }
-    }
-}
-
-impl<'a, S: Clone, J, M, L> Clone for Scan<'a, S, J, M, L> {
+impl<'a> Clone for Scan<'a> {
     fn clone(&self) -> Self {
         Self {
             db: self.db,
             subject: self.subject.clone(),
             predicate: self.predicate.clone(),
             object: self.object.clone(),
-            kind: self.kind.clone(),
-            phantom_join: PhantomData,
-            phantom_minus: PhantomData,
-            phantom_limit: PhantomData,
+            iter: self.iter.clone(),
         }
     }
 }
 
-impl<'a, S, J, M, L> Eq for Scan<'a, S, J, M, L> {}
-impl<'a, S, J, M, L> PartialEq for Scan<'a, S, J, M, L> {
+impl<'a> Eq for Scan<'a> {}
+impl<'a> PartialEq for Scan<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.subject == other.subject
             && self.predicate == other.predicate
@@ -111,22 +62,21 @@ impl<'a, S, J, M, L> PartialEq for Scan<'a, S, J, M, L> {
     }
 }
 
-impl<'a, S, J, M, L> fmt::Display for Scan<'a, S, J, M, L> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bound = BoundVars::new()
-            .visit_scan(self)
-            .iter()
-            .cloned()
-            .collect::<query::Variables>();
-
-        f.write_str(&format!(
-            "SCAN Bound: {}, BGP: {{ {} {} {} }}",
-            bound, self.subject, self.predicate, self.object,
-        ))
+impl<'a> Hash for Scan<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.subject.hash(state);
+        self.predicate.hash(state);
+        self.object.hash(state);
     }
 }
 
-impl<S, J, M, L> Scan<'_, S, J, M, L> {
+impl<'a> fmt::Display for Scan<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&Printer::new().visit_scan(self))
+    }
+}
+
+impl Scan<'_> {
     fn triple_to_mapping(&self, triple: &database::Triple) -> Option<Mapping> {
         let subj = match &self.subject {
             query::Subject::I(s1) => match &triple.subject {
@@ -192,39 +142,8 @@ impl<S, J, M, L> Scan<'_, S, J, M, L> {
     }
 }
 
-impl<'a, J, M, L> Execute for Scan<'a, CollScan, J, M, L> {
-    fn execute(&self) -> crate::semantics::mapping::MappingSet {
-        let subject = &self.subject;
-        let predicate = &self.predicate;
-        let object = &self.object;
-        let db = self.db;
-        log::debug!("Scanning for {} {} {}", subject, predicate, object);
-
-        let mappings: MappingSet = db
-            .triples()
-            .iter()
-            .filter_map(|t| self.triple_to_mapping(t))
-            .collect();
-
-        log::debug!("Scan produces {} mappings", mappings.len());
-
-        mappings
-    }
-}
-
-impl<'a, J, M, L> Iterator for Scan<'a, IterScan<'a>, J, M, L> {
+impl<'a> Iterator for Scan<'a> {
     type Item = Mapping;
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let (lower, upper) = self.kind.iter.size_hint();
-        let lower = if let Ok(selectivity) = self.sel_pf(self.db.summary()) {
-            (lower as f32) * selectivity
-        } else {
-            0.0
-        } as usize;
-
-        (lower, upper)
-    }
 
     fn next(&mut self) -> Option<Self::Item> {
         log::trace!(
@@ -234,7 +153,7 @@ impl<'a, J, M, L> Iterator for Scan<'a, IterScan<'a>, J, M, L> {
             self.object
         );
 
-        while let Some(triple) = self.kind.iter.next() {
+        while let Some(triple) = self.iter.next() {
             if let Some(result) = self.triple_to_mapping(&triple) {
                 return Some(result);
             };
@@ -246,8 +165,8 @@ impl<'a, J, M, L> Iterator for Scan<'a, IterScan<'a>, J, M, L> {
     }
 }
 
-impl<'a, S, J, M, L> Selectivity for Scan<'a, S, J, M, L> {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
+impl<'a> Selectivity for Scan<'a> {
+    fn sel_vc(&self) -> SelectivityResult {
         let sub = self.subject.sel_vc()?;
         let pre = self.predicate.sel_vc()?;
         let obj = (&self.predicate, &self.object).sel_vc()?;
@@ -255,11 +174,11 @@ impl<'a, S, J, M, L> Selectivity for Scan<'a, S, J, M, L> {
         Ok(sub * pre * obj)
     }
 
-    fn sel_vcp(&self) -> Result<f32, SelectivityError> {
+    fn sel_vcp(&self) -> SelectivityResult {
         self.sel_vc()
     }
 
-    fn sel_pf(&self, s: &database::Summary) -> Result<f32, SelectivityError> {
+    fn sel_pf(&self, s: &database::Summary) -> SelectivityResult {
         let sub = self.subject.sel_pf(s)?;
         let pre = self.predicate.sel_pf(s)?;
         let obj = (&self.predicate, &self.object).sel_pf(s)?;
@@ -267,7 +186,58 @@ impl<'a, S, J, M, L> Selectivity for Scan<'a, S, J, M, L> {
         Ok(sub * pre * obj)
     }
 
-    fn sel_pfj(&self, s: &database::Summary) -> Result<f32, SelectivityError> {
+    fn sel_pfc(&self, s: &database::Summary, i: &condition::ConditionInfo) -> SelectivityResult {
+        Ok(self.sel_pf(s)? * self.condition_factor(s, i))
+    }
+
+    fn sel_pfj(&self, s: &database::Summary) -> SelectivityResult {
         self.sel_pf(s)
+    }
+
+    fn sel_pfjc(&self, s: &database::Summary, i: &condition::ConditionInfo) -> SelectivityResult {
+        Ok(self.sel_pfj(s)? * self.condition_factor(s, i))
+    }
+}
+
+impl<'a> Scan<'a> {
+    fn condition_factor(&self, s: &database::Summary, i: &condition::ConditionInfo) -> f64 {
+        let mut lower = None;
+        let mut upper = None;
+
+        if let query::Object::V(v) = &self.object {
+            if let Some(info) = i.get(v) {
+                for info in info.iter() {
+                    match info {
+                        condition::VariableInfo::Lt(l) => {
+                            upper = l.parsed.map(|x| x.min(upper.unwrap_or(f64::INFINITY)))
+                        }
+                        condition::VariableInfo::Gt(l) => {
+                            lower = l.parsed.map(|x| x.max(lower.unwrap_or(-f64::INFINITY)))
+                        }
+                        condition::VariableInfo::Lte(l) => {
+                            upper = l.parsed.map(|x| x.min(upper.unwrap_or(f64::INFINITY)))
+                        }
+                        condition::VariableInfo::Gte(l) => {
+                            lower = l.parsed.map(|x| x.max(lower.unwrap_or(-f64::INFINITY)))
+                        }
+                        condition::VariableInfo::EqualsLiteral(l) => {
+                            upper = l.parsed.map(|x| x.min(upper.unwrap_or(f64::INFINITY)));
+                            lower = l.parsed.map(|x| x.min(lower.unwrap_or(-f64::INFINITY)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let predicate = match &self.predicate {
+            query::Predicate::I(i) => Some(database::Predicate::I(i.to_owned())),
+            query::Predicate::V(_) => None,
+        };
+
+        match predicate {
+            Some(p) => s.p_l(&p, lower, upper),
+            None => 1.0,
+        }
     }
 }

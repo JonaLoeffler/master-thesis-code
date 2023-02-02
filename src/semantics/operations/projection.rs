@@ -5,9 +5,9 @@ use crate::{
     syntax::{database, query},
 };
 
-use super::Execute;
+use super::{visitors::printer::Printer, Operation, OperationVisitor};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Projection<O: Display> {
     pub(super) operation: Box<O>,
     pub(super) vars: query::Variables,
@@ -22,48 +22,13 @@ impl<O: Display> Projection<O> {
     }
 }
 
-impl<O: Display> Display for Projection<O> {
+impl<'a> Display for Projection<Operation<'a>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("PROJECTION {}", self.vars))?;
-
-        f.write_str(&format!("\n{}", self.operation).replace("\n", "\n  "))?;
-
-        Ok(())
+        f.write_str(&Printer::new().visit_projection(self))
     }
 }
 
-impl<O> Execute for Projection<O>
-where
-    O: Execute + Display,
-{
-    fn execute(&self) -> crate::semantics::mapping::MappingSet {
-        let results = self.operation.execute();
-
-        log::debug!("Selecting {} from {} mappings", self.vars, results.len());
-
-        results
-            .into_iter()
-            .map(|m| {
-                let mut result = Mapping::new();
-
-                for (i, var) in (&self.vars).iter().enumerate() {
-                    result.insert(
-                        var.to_owned().set_pos(i),
-                        if let Some(o) = m.get(var) {
-                            o.to_owned()
-                        } else {
-                            database::Object::B
-                        },
-                    );
-                }
-
-                result
-            })
-            .collect()
-    }
-}
-
-impl<'a, O> Iterator for Projection<O>
+impl<O> Iterator for Projection<O>
 where
     O: Iterator<Item = Mapping> + Display,
 {

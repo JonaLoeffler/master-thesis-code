@@ -1,8 +1,11 @@
-use log::debug;
+use log::{debug, trace};
 use tree_sitter::{Node, Tree};
 
 use crate::syntax::{
-    query::{Expression, Object, Predicate, SolutionModifier, Subject, Type, Variable, Variables},
+    query::{
+        Condition, Expression, Object, Predicate, SolutionModifier, Subject, Type, Variable,
+        Variables,
+    },
     Iri,
 };
 use std::{collections::HashMap, error::Error, fmt::Display, str::FromStr};
@@ -60,7 +63,10 @@ impl FromStr for Query {
     type Err = Box<dyn Error>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let copy = s.clone();
+        log::trace!("Parsing query from str");
+
+        let binding = String::from(s);
+        let copy = binding.as_str();
         let bytes = copy.as_bytes();
 
         let mut parser = tree_sitter::Parser::new();
@@ -69,6 +75,8 @@ impl FromStr for Query {
         let tree = parser
             .parse(s, Option::None)
             .ok_or("Unable to parse file")?;
+
+        log::trace!("Parsing prologue");
 
         // Prologue
         let query = tree_sitter::Query::new(
@@ -82,9 +90,8 @@ impl FromStr for Query {
         let mut query_cursor = tree_sitter::QueryCursor::new();
         let declarations = query_cursor
             .matches(&query, tree.root_node(), bytes)
-            .into_iter()
             .map(|result| -> (String, String) {
-                let mut captures = result.captures.into_iter();
+                let mut captures = result.captures.iter();
 
                 (
                     captures.next().expect("should have capture #1").text(bytes),
@@ -92,6 +99,8 @@ impl FromStr for Query {
                 )
             })
             .collect::<HashMap<String, String>>();
+
+        log::trace!("Parsing select");
 
         // Select
         let query = tree_sitter::Query::new(
@@ -105,9 +114,8 @@ impl FromStr for Query {
         let mut query_cursor = tree_sitter::QueryCursor::new();
         let variables = query_cursor
             .matches(&query, tree.root_node(), bytes)
-            .into_iter()
             .map(|result| -> Variable {
-                let mut captures = result.captures.into_iter();
+                let mut captures = result.captures.iter();
 
                 Variable::new(captures.next().expect("should have capture #1").text(bytes))
             })
@@ -116,6 +124,8 @@ impl FromStr for Query {
         if variables.is_empty() {
             return Err(Box::new(ParseQueryError::EmptySelectClause));
         }
+
+        log::trace!("Parsing where");
 
         // Where
         let query = tree_sitter::Query::new(tree.language(), "(where_clause) @where")
@@ -151,6 +161,8 @@ impl FromStr for Query {
             }
         };
 
+        log::trace!("Parsing solution modifiers");
+
         // Solution modifiers
         let query = tree_sitter::Query::new(tree.language(), "(limit_offset_clauses) @limit")
             .expect("should be able to parse query");
@@ -173,12 +185,16 @@ impl FromStr for Query {
             SolutionModifier::default()
         };
 
-        return Ok(Query {
+        log::trace!("Done with parsing query!");
+
+        Ok(Query {
             prologue: declarations,
             kind: Type::SelectQuery(variables, expr, modifier),
-        });
+        })
     }
 }
+
+type ParseResult<T> = Result<T, ParseQueryError>;
 
 fn group_graph_pattern(
     node: Node,
@@ -187,17 +203,31 @@ fn group_graph_pattern(
 ) -> Result<Expression, ParseQueryError> {
     debug!("Parsing group_graph_pattern node");
 
+    let mut expression: Option<Expression> = None;
+    let mut condition: Option<Condition> = None;
+
     for child in node.named_children(&mut tree.walk()) {
-        return match child.kind() {
-            "triples_block" => triples_block(child, tree, bytes),
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+        match child.kind() {
+            "triples_block" => expression = Some(triples_block(child, tree, bytes)?),
+            "filter" => condition = Some(filter(child, tree, bytes)?),
+            _ => debug!("Unknown node type {}", child.kind()),
         };
     }
 
-    todo!()
+    if let Some(condition) = condition {
+        expression = Some(Expression::Filter(
+            Box::new(expression.unwrap()),
+            Box::new(condition),
+        ));
+    }
+
+    match expression {
+        Some(e) => Ok(e),
+        None => Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+    }
 }
 
-fn triples_block(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Expression, ParseQueryError> {
+fn triples_block(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Expression> {
     debug!("Parsing triples_block node");
 
     let mut triples = vec![];
@@ -205,7 +235,7 @@ fn triples_block(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Expression, Pa
     for child in node.named_children(&mut tree.walk()) {
         let new_triples = match child.kind() {
             "triples_same_subject" => triples_same_subject(child, tree, bytes)?,
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
         };
 
         triples.push(new_triples);
@@ -214,11 +244,180 @@ fn triples_block(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Expression, Pa
     Ok(triples.into_iter().collect())
 }
 
-fn triples_same_subject(
-    node: Node,
-    tree: &Tree,
-    bytes: &[u8],
-) -> Result<Expression, ParseQueryError> {
+fn filter(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Condition> {
+    debug!("Parsing filter node");
+
+    if let Some(child) = node.named_children(&mut tree.walk()).next() {
+        let condition = match child.kind() {
+            "bracketted_expression" => bracketted_expression(child, tree, bytes)?,
+            "build_in_function" => build_in_function(child, tree, bytes)?,
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        return Ok(condition);
+    }
+
+    Err(ParseQueryError::ParseNodeError(format!("{node:#?}")))
+}
+
+fn build_in_function(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Condition> {
+    debug!("Parsing builtin function call node");
+
+    for child in node.named_children(&mut tree.walk()) {
+        let var = match child.kind() {
+            "var" => var(child, tree, bytes)?,
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        if node.text(bytes).to_lowercase().starts_with("bound") {
+            return Ok(Condition::Bound(var));
+        }
+    }
+
+    Err(ParseQueryError::ParseNodeError(format!("{node:#?}")))
+}
+
+fn bracketted_expression(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Condition> {
+    debug!("Parsing bracketted expression node");
+
+    let mut results: Vec<Condition> = Vec::new();
+
+    for child in node.named_children(&mut tree.walk()) {
+        let result = match child.kind() {
+            "unary_expression" => unary_expression(child, tree, bytes)?,
+            "binary_expression" => binary_expression(child, tree, bytes)?,
+            "bracketted_expression" => bracketted_expression(child, tree, bytes)?,
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+        };
+
+        results.push(result);
+    }
+
+    if let Some(result) = results.first() {
+        return Ok(result.clone());
+    }
+
+    Err(ParseQueryError::ParseNodeError(format!("{node:#?}")))
+}
+
+fn binary_expression(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Condition> {
+    debug!("Parsing binary expression node");
+
+    let operator = node
+        .text(bytes)
+        .replace(&node.named_child(0).unwrap().text(bytes), "")
+        .replace(&node.named_child(1).unwrap().text(bytes), "")
+        .trim()
+        .to_string();
+
+    if operator == "=" {
+        debug!("working on operator {}", operator);
+
+        let left = match node.named_child(0) {
+            Some(child) => match child.kind() {
+                "var" => Object::V(var(child, tree, bytes)?),
+                "rdf_literal" => Object::L(rdf_literal(child, tree, bytes)?.into()),
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("missing{node:#?}"))),
+        };
+
+        let right = match node.named_child(1) {
+            Some(child) => match child.kind() {
+                "var" => Object::V(var(child, tree, bytes)?),
+                "rdf_literal" => Object::L(rdf_literal(child, tree, bytes)?.into()),
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        trace!("condition equals {:?}", (&left, &right));
+
+        return Ok(Condition::Equals(left, right));
+    }
+
+    if operator == "||" || operator == "&&" {
+        debug!("working on operator {}", operator);
+
+        let left = match node.named_child(0) {
+            Some(child) => match child.kind() {
+                "bracketted_expression" => bracketted_expression(child, tree, bytes)?,
+                "build_in_function" => build_in_function(child, tree, bytes)?,
+                "unary_expression" => unary_expression(child, tree, bytes)?,
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        let right = match node.named_child(1) {
+            Some(child) => match child.kind() {
+                "bracketted_expression" => bracketted_expression(child, tree, bytes)?,
+                "build_in_function" => build_in_function(child, tree, bytes)?,
+                "unary_expression" => unary_expression(child, tree, bytes)?,
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        return match operator.as_str() {
+            "||" => Ok(Condition::Or(Box::new(left), Box::new(right))),
+            "&&" => Ok(Condition::And(Box::new(left), Box::new(right))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+    }
+
+    if operator == ">" || operator == "<" {
+        debug!("working on operator {}", operator);
+
+        let left = match node.named_child(0) {
+            Some(child) => match child.kind() {
+                "var" => Object::V(var(child, tree, bytes)?),
+                "rdf_literal" | "integer" => Object::L(rdf_literal(child, tree, bytes)?.into()),
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        let right = match node.named_child(1) {
+            Some(child) => match child.kind() {
+                "var" => Object::V(var(child, tree, bytes)?),
+                "rdf_literal" | "integer" => Object::L(rdf_literal(child, tree, bytes)?.into()),
+                _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+            },
+            None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+
+        return match operator.as_str() {
+            "<" => Ok(Condition::LT(left, right)),
+            ">" => Ok(Condition::GT(left, right)),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+        };
+    }
+
+    Err(ParseQueryError::ParseNodeError(format!("{node:#?}")))
+}
+
+fn unary_expression(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Condition> {
+    debug!("Parsing unary expression node");
+
+    match node.child(0).unwrap().kind() {
+        "!" => {
+            if let Some(child) = node.named_child(0) {
+                let condition = match child.kind() {
+                    "bracketted_expression" => bracketted_expression(child, tree, bytes)?,
+                    _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
+                };
+
+                return Ok(Condition::Not(Box::new(condition)));
+            }
+        }
+        _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
+    }
+
+    Err(ParseQueryError::ParseNodeError(format!("{node:#?}")))
+}
+
+fn triples_same_subject(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Expression> {
     debug!("Parsing triples_same_subject node");
 
     let mut cursor = tree.walk();
@@ -229,9 +428,9 @@ fn triples_same_subject(
             "var" => Subject::V(var(child, tree, bytes)?),
             "prefixed_name" => Subject::I(prefixed_name(child, tree, bytes)?),
             "iri_reference" => Subject::I(iri_reference(child, tree, bytes)?),
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
         },
-        None => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+        None => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
     };
 
     let mut triples = vec![];
@@ -239,33 +438,29 @@ fn triples_same_subject(
     for child in iter {
         let properties = match child.kind() {
             "property_list" => property_list(child, tree, bytes)?,
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
         };
 
         for (p, o) in properties {
-            triples.push(Expression::Triple {
-                subject: subject.to_owned(),
-                predicate: p,
-                object: o,
-            });
+            triples.push(Expression::Triple(
+                Box::new(subject.to_owned()),
+                Box::new(p),
+                Box::new(o),
+            ));
         }
     }
 
     Ok(triples.into_iter().collect())
 }
 
-fn property_list(
-    node: Node,
-    tree: &Tree,
-    bytes: &[u8],
-) -> Result<Vec<(Predicate, Object)>, ParseQueryError> {
+fn property_list(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Vec<(Predicate, Object)>> {
     debug!("Parsing property_list node");
 
     let mut properties = vec![];
     for child in node.named_children(&mut tree.walk()) {
         let mut new_properties = match child.kind() {
             "property" => property(child, tree, bytes)?,
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
         };
 
         properties.append(&mut new_properties);
@@ -274,27 +469,23 @@ fn property_list(
     Ok(properties)
 }
 
-fn property(
-    node: Node,
-    tree: &Tree,
-    bytes: &[u8],
-) -> Result<Vec<(Predicate, Object)>, ParseQueryError> {
+fn property(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Vec<(Predicate, Object)>> {
     debug!("Parsing property node");
 
-    let mut cursor = &mut tree.walk();
-    let mut iter = node.named_children(&mut cursor);
+    let cursor = &mut tree.walk();
+    let mut iter = node.named_children(cursor);
 
     let child = iter.next().unwrap();
     let predicate = match child.kind() {
-        "path_element" => Predicate::I(path_element(child, tree, bytes)?.to_owned()),
+        "path_element" => Predicate::I(path_element(child, tree, bytes)?),
         "var" => Predicate::V(var(child, tree, bytes)?),
-        _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+        _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
     };
 
     let child = iter.next().unwrap();
     let objects = match child.kind() {
         "object_list" => object_list(child, tree, bytes)?,
-        _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+        _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
     };
 
     Ok(objects
@@ -303,40 +494,42 @@ fn property(
         .collect())
 }
 
-fn object_list(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Vec<Object>, ParseQueryError> {
+fn object_list(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Vec<Object>> {
     debug!("Parsing object_list node");
 
     node.named_children(&mut tree.walk())
-        .into_iter()
         .map(|child| -> Result<Object, ParseQueryError> {
             match child.kind() {
                 "prefixed_name" => Ok(Object::I(prefixed_name(child, tree, bytes)?)),
                 "iri_reference" => Ok(Object::I(iri_reference(child, tree, bytes)?)),
-                "rdf_literal" => Ok(Object::L(rdf_literal(child, tree, bytes)?)),
+                "rdf_literal" => Ok(Object::L(rdf_literal(child, tree, bytes)?.into())),
                 "var" => Ok(Object::V(var(child, tree, bytes)?)),
-                _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+                _ => Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
             }
         })
         .collect()
 }
 
-fn rdf_literal(child: Node, _tree: &Tree, bytes: &[u8]) -> Result<String, ParseQueryError> {
+fn rdf_literal(child: Node, _tree: &Tree, bytes: &[u8]) -> ParseResult<String> {
+    debug!("Parsing rdf_literal node");
+
     Ok(child.text(bytes))
 }
 
-fn var(node: Node, _tree: &Tree, bytes: &[u8]) -> Result<Variable, ParseQueryError> {
+fn var(node: Node, _tree: &Tree, bytes: &[u8]) -> ParseResult<Variable> {
     debug!("Parsing var node");
 
     Ok(Variable::new(node.text(bytes)))
 }
 
-fn path_element(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Iri, ParseQueryError> {
+fn path_element(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<Iri> {
     debug!("Parsing path_element_node");
 
-    for child in node.children(&mut tree.walk()) {
+    if let Some(child) = node.children(&mut tree.walk()).next() {
         return match child.kind() {
+            "iri_reference" => iri_reference(child, tree, bytes),
             "prefixed_name" => prefixed_name(child, tree, bytes),
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{child:#?}"))),
         };
     }
 
@@ -345,7 +538,7 @@ fn path_element(node: Node, tree: &Tree, bytes: &[u8]) -> Result<Iri, ParseQuery
     ))
 }
 
-fn prefixed_name(node: Node, _tree: &Tree, bytes: &[u8]) -> Result<Iri, ParseQueryError> {
+fn prefixed_name(node: Node, _tree: &Tree, bytes: &[u8]) -> ParseResult<Iri> {
     debug!("Parsing prefixed_name node");
 
     let ns = node.child(0).unwrap().child(0).unwrap().text(bytes);
@@ -354,17 +547,13 @@ fn prefixed_name(node: Node, _tree: &Tree, bytes: &[u8]) -> Result<Iri, ParseQue
     Ok(Iri::new(format!("{ns}:{local}")))
 }
 
-fn iri_reference(node: Node, _tree: &Tree, bytes: &[u8]) -> Result<Iri, ParseQueryError> {
+fn iri_reference(node: Node, _tree: &Tree, bytes: &[u8]) -> ParseResult<Iri> {
     debug!("Parsing prefixed_name node");
 
     Ok(Iri::IRIREF(node.text(bytes)))
 }
 
-fn limit_offset_clauses(
-    node: Node,
-    tree: &Tree,
-    bytes: &[u8],
-) -> Result<SolutionModifier, ParseQueryError> {
+fn limit_offset_clauses(node: Node, tree: &Tree, bytes: &[u8]) -> ParseResult<SolutionModifier> {
     debug!("Parsing limit offset clauses {}", node.kind());
 
     let mut result = SolutionModifier::default();
@@ -378,7 +567,7 @@ fn limit_offset_clauses(
                 result.with_offset(child.named_child(0).unwrap().text(bytes).parse()?);
             }
 
-            _ => return Err(ParseQueryError::ParseNodeError(format!("{:#?}", node))),
+            _ => return Err(ParseQueryError::ParseNodeError(format!("{node:#?}"))),
         };
     }
 

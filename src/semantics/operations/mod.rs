@@ -10,68 +10,54 @@ pub(super) mod union;
 pub(super) mod visitors;
 
 use core::fmt;
+use std::collections::HashSet;
 
-use crate::syntax::database;
+use crate::syntax::{database, query::Variable};
 
 use self::{
     filter::Filter,
-    join::{CollJoin, IterJoin, Join},
+    join::Join,
     leftjoin::LeftJoin,
-    limit::{CollLimit, IterLimit, Limit},
-    minus::{CollMinus, IterMinus, Minus},
+    limit::Limit,
+    minus::Minus,
     offset::Offset,
     projection::Projection,
-    scan::{CollScan, IterScan, Scan},
+    scan::Scan,
     union::Union,
-    visitors::meta::Meta,
+    visitors::{bound::BoundVars, condition::ConditionInfo, meta::Meta, printer::Printer},
 };
 
 use super::{
-    mapping::{Mapping, MappingSet},
+    mapping::Mapping,
     results::OperationMeta,
-    selectivity::{Selectivity, SelectivityError},
+    selectivity::{Selectivity, SelectivityResult},
 };
 
-pub(crate) trait Execute {
-    fn execute(&self) -> MappingSet;
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum Operation<'a, S, J, M, L> {
-    Scan(Scan<'a, S, J, M, L>),
-    Join(Join<J, Self>),
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub(crate) enum Operation<'a> {
+    Scan(Scan<'a>),
+    Join(Join<Self>),
     Projection(Projection<Self>),
     Union(Union<Self>),
     Filter(Filter<Self>),
     LeftJoin(LeftJoin<Self>),
-    Minus(Minus<M, Self>),
+    Minus(Minus<Self>),
     Offset(Offset<Self>),
-    Limit(Limit<L, Self>),
+    Limit(Limit<Self>),
 }
 
-impl<'a, S, J, M, L> Operation<'a, S, J, M, L> {
+impl<'a> Operation<'a> {
     pub(crate) fn meta(&self) -> OperationMeta {
         Meta::new().visit(self)
     }
-}
 
-impl<'a> Execute for Operation<'a, CollScan, CollJoin, CollMinus, CollLimit> {
-    fn execute(&self) -> MappingSet {
-        match self {
-            Operation::Scan(s) => s.execute(),
-            Operation::Join(j) => j.execute(),
-            Operation::Projection(p) => p.execute(),
-            Operation::Union(u) => u.execute(),
-            Operation::Filter(f) => f.execute(),
-            Operation::LeftJoin(o) => o.execute(),
-            Operation::Minus(m) => m.execute(),
-            Operation::Offset(o) => o.execute(),
-            Operation::Limit(l) => l.execute(),
-        }
+    pub(crate) fn bound_vars(&self) -> HashSet<Variable> {
+        BoundVars::new().visit(self)
     }
 }
 
-impl<'a> Iterator for Operation<'a, IterScan<'a>, IterJoin, IterMinus, IterLimit> {
+impl<'a> Iterator for Operation<'a> {
     type Item = Mapping;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -89,24 +75,14 @@ impl<'a> Iterator for Operation<'a, IterScan<'a>, IterJoin, IterMinus, IterLimit
     }
 }
 
-impl<'a, S, J, M, L> fmt::Display for Operation<'a, S, J, M, L> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Operation::Scan(s) => s.fmt(fmt),
-            Operation::Join(j) => j.fmt(fmt),
-            Operation::Projection(p) => p.fmt(fmt),
-            Operation::Union(u) => u.fmt(fmt),
-            Operation::Filter(f) => f.fmt(fmt),
-            Operation::LeftJoin(o) => o.fmt(fmt),
-            Operation::Minus(m) => m.fmt(fmt),
-            Operation::Offset(o) => o.fmt(fmt),
-            Operation::Limit(l) => l.fmt(fmt),
-        }
+impl<'a> fmt::Display for Operation<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&Printer::new().visit(self))
     }
 }
 
-impl<'a, S, J, M, L> Selectivity for Operation<'a, S, J, M, L> {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
+impl<'a> Selectivity for Operation<'a> {
+    fn sel_vc(&self) -> SelectivityResult {
         match self {
             Operation::Scan(s) => s.sel_vc(),
             Operation::Join(j) => j.sel_vc(),
@@ -120,7 +96,7 @@ impl<'a, S, J, M, L> Selectivity for Operation<'a, S, J, M, L> {
         }
     }
 
-    fn sel_vcp(&self) -> Result<f32, SelectivityError> {
+    fn sel_vcp(&self) -> SelectivityResult {
         match self {
             Operation::Scan(s) => s.sel_vcp(),
             Operation::Join(j) => j.sel_vcp(),
@@ -134,7 +110,7 @@ impl<'a, S, J, M, L> Selectivity for Operation<'a, S, J, M, L> {
         }
     }
 
-    fn sel_pf(&self, summary: &database::Summary) -> Result<f32, SelectivityError> {
+    fn sel_pf(&self, summary: &database::Summary) -> SelectivityResult {
         match self {
             Operation::Scan(s) => s.sel_pf(summary),
             Operation::Join(j) => j.sel_pf(summary),
@@ -148,7 +124,21 @@ impl<'a, S, J, M, L> Selectivity for Operation<'a, S, J, M, L> {
         }
     }
 
-    fn sel_pfj(&self, summary: &database::Summary) -> Result<f32, SelectivityError> {
+    fn sel_pfc(&self, summary: &database::Summary, info: &ConditionInfo) -> SelectivityResult {
+        match self {
+            Operation::Scan(s) => s.sel_pfc(summary, info),
+            Operation::Join(j) => j.sel_pfc(summary, info),
+            Operation::Projection(p) => p.sel_pfc(summary, info),
+            Operation::Union(u) => u.sel_pfc(summary, info),
+            Operation::Filter(f) => f.sel_pfc(summary, info),
+            Operation::LeftJoin(l) => l.sel_pfc(summary, info),
+            Operation::Minus(m) => m.sel_pfc(summary, info),
+            Operation::Offset(o) => o.sel_pfc(summary, info),
+            Operation::Limit(l) => l.sel_pfc(summary, info),
+        }
+    }
+
+    fn sel_pfj(&self, summary: &database::Summary) -> SelectivityResult {
         match self {
             Operation::Scan(s) => s.sel_pfj(summary),
             Operation::Join(j) => j.sel_pfj(summary),
@@ -161,10 +151,24 @@ impl<'a, S, J, M, L> Selectivity for Operation<'a, S, J, M, L> {
             Operation::Limit(l) => l.sel_pfj(summary),
         }
     }
+
+    fn sel_pfjc(&self, summary: &database::Summary, info: &ConditionInfo) -> SelectivityResult {
+        match self {
+            Operation::Scan(s) => s.sel_pfjc(summary, info),
+            Operation::Join(j) => j.sel_pfjc(summary, info),
+            Operation::Projection(p) => p.sel_pfjc(summary, info),
+            Operation::Union(u) => u.sel_pfjc(summary, info),
+            Operation::Filter(f) => f.sel_pfjc(summary, info),
+            Operation::LeftJoin(l) => l.sel_pfjc(summary, info),
+            Operation::Minus(m) => m.sel_pfjc(summary, info),
+            Operation::Offset(o) => o.sel_pfjc(summary, info),
+            Operation::Limit(l) => l.sel_pfjc(summary, info),
+        }
+    }
 }
 
-pub(super) trait OperationVisitor<'a, S, J, M, L, R> {
-    fn visit(&mut self, o: &'a Operation<'a, S, J, M, L>) -> R {
+pub(super) trait OperationVisitor<'a, R> {
+    fn visit(&mut self, o: &'a Operation<'a>) -> R {
         match o {
             Operation::Scan(s) => self.visit_scan(s),
             Operation::Join(j) => self.visit_join(j),
@@ -178,13 +182,13 @@ pub(super) trait OperationVisitor<'a, S, J, M, L, R> {
         }
     }
 
-    fn visit_scan(&mut self, o: &'a Scan<S, J, M, L>) -> R;
-    fn visit_join(&mut self, o: &'a Join<J, Operation<'a, S, J, M, L>>) -> R;
-    fn visit_projection(&mut self, o: &'a Projection<Operation<'a, S, J, M, L>>) -> R;
-    fn visit_union(&mut self, o: &'a Union<Operation<'a, S, J, M, L>>) -> R;
-    fn visit_filter(&mut self, o: &'a Filter<Operation<'a, S, J, M, L>>) -> R;
-    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a, S, J, M, L>>) -> R;
-    fn visit_minus(&mut self, o: &'a Minus<M, Operation<'a, S, J, M, L>>) -> R;
-    fn visit_offset(&mut self, o: &'a Offset<Operation<'a, S, J, M, L>>) -> R;
-    fn visit_limit(&mut self, o: &'a Limit<L, Operation<'a, S, J, M, L>>) -> R;
+    fn visit_scan(&mut self, o: &'a Scan) -> R;
+    fn visit_join(&mut self, o: &'a Join<Operation<'a>>) -> R;
+    fn visit_projection(&mut self, o: &'a Projection<Operation<'a>>) -> R;
+    fn visit_union(&mut self, o: &'a Union<Operation<'a>>) -> R;
+    fn visit_filter(&mut self, o: &'a Filter<Operation<'a>>) -> R;
+    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a>>) -> R;
+    fn visit_minus(&mut self, o: &'a Minus<Operation<'a>>) -> R;
+    fn visit_offset(&mut self, o: &'a Offset<Operation<'a>>) -> R;
+    fn visit_limit(&mut self, o: &'a Limit<Operation<'a>>) -> R;
 }

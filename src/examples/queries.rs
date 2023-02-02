@@ -10,16 +10,16 @@ pub fn example1() -> Query {
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?e".into(), "?a".into()]),
             Expression::And(
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<email>".into()),
-                    object: Object::V("?e".into()),
-                }),
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<age>".into()),
-                    object: Object::V("?a".into()),
-                }),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<email>".into())),
+                    Box::new(Object::V("?e".into())),
+                )),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<age>".into())),
+                    Box::new(Object::V("?a".into())),
+                )),
             ),
             SolutionModifier::default(),
         ),
@@ -31,11 +31,11 @@ pub fn example2() -> Query {
         prologue: HashMap::new(),
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?a".into()]),
-            Expression::Triple {
-                subject: Subject::V("?p".into()),
-                predicate: Predicate::I("<age>".into()),
-                object: Object::V("?a".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::V("?p".into())),
+                Box::new(Predicate::I("<age>".into())),
+                Box::new(Object::V("?a".into())),
+            ),
             SolutionModifier::default(),
         ),
     }
@@ -45,11 +45,11 @@ pub fn example3() -> Query {
     Query {
         prologue: HashMap::new(),
         kind: Type::AskQuery(
-            Expression::Triple {
-                subject: Subject::V("?p".into()),
-                predicate: Predicate::I("<age>".into()),
-                object: Object::V("?a".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::V("?p".into())),
+                Box::new(Predicate::I("<age>".into())),
+                Box::new(Object::V("?a".into())),
+            ),
             SolutionModifier::default(),
         ),
     }
@@ -60,11 +60,11 @@ pub fn example4() -> Query {
         prologue: HashMap::new(),
         kind: Type::SelectQuery(
             Variables::new(vec!["?a".into()]),
-            Expression::Triple {
-                subject: Subject::I("<P1>".into()),
-                predicate: Predicate::I("<age>".into()),
-                object: Object::V("?a".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::I("<P1>".into())),
+                Box::new(Predicate::I("<age>".into())),
+                Box::new(Object::V("?a".into())),
+            ),
             SolutionModifier::default(),
         ),
     }
@@ -76,11 +76,11 @@ pub fn example5() -> Query {
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?a".into()]),
             Expression::Filter(
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<age>".into()),
-                    object: Object::V("?a".into()),
-                }),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<age>".into())),
+                    Box::new(Object::V("?a".into())),
+                )),
                 Box::new(Condition::Or(
                     Box::new(Condition::Equals(
                         Object::V("?a".into()),
@@ -102,11 +102,11 @@ pub fn example6() -> Query {
         prologue: HashMap::new(),
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?a".into()]),
-            Expression::Triple {
-                subject: Subject::V("?p".into()),
-                predicate: Predicate::I("<age>".into()),
-                object: Object::V("?a".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::V("?p".into())),
+                Box::new(Predicate::I("<age>".into())),
+                Box::new(Object::V("?a".into())),
+            ),
             SolutionModifier::default(),
         ),
     }
@@ -118,16 +118,16 @@ pub fn example7() -> Query {
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?a".into(), "?e".into()]),
             Expression::Optional(
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<age>".into()),
-                    object: Object::V("?a".into()),
-                }),
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<email>".into()),
-                    object: Object::V("?e".into()),
-                }),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<age>".into())),
+                    Box::new(Object::V("?a".into())),
+                )),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<email>".into())),
+                    Box::new(Object::V("?e".into())),
+                )),
             ),
             SolutionModifier::default(),
         ),
@@ -140,16 +140,16 @@ pub fn example8() -> Query {
         kind: Type::SelectQuery(
             Variables::new(vec!["?p".into(), "?a".into(), "?e".into()]),
             Expression::Union(
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<age>".into()),
-                    object: Object::V("?a".into()),
-                }),
-                Box::new(Expression::Triple {
-                    subject: Subject::V("?p".into()),
-                    predicate: Predicate::I("<email>".into()),
-                    object: Object::V("?e".into()),
-                }),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<age>".into())),
+                    Box::new(Object::V("?a".into())),
+                )),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V("?p".into())),
+                    Box::new(Predicate::I("<email>".into())),
+                    Box::new(Object::V("?e".into())),
+                )),
             ),
             SolutionModifier::default(),
         ),

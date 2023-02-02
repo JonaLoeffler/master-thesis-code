@@ -4,43 +4,41 @@ use clap::ValueEnum;
 
 #[derive(Clone)]
 pub struct EvalOptions {
-    pub semantics: Semantics,
     pub optimizer: Optimizer,
+    pub condition: bool,
     pub dryrun: bool,
+    pub log: bool,
 }
 
 impl EvalOptions {
-    pub fn new(semantics: Semantics, optimizer: Optimizer, dryrun: bool) -> Self {
-        Self {
-            optimizer,
-            semantics,
-            dryrun,
-        }
-    }
-
-    pub fn with_semantics(self, semantics: Semantics) -> Self {
-        Self {
-            semantics,
-            optimizer: self.optimizer,
-            dryrun: self.dryrun,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_optimizer(self, optimizer: Optimizer) -> Self {
-        Self {
-            semantics: self.semantics,
-            optimizer,
-            dryrun: self.dryrun,
-        }
+        Self { optimizer, ..self }
+    }
+
+    pub fn with_log(self, log: bool) -> Self {
+        Self { log, ..self }
+    }
+
+    pub fn with_dryrun(self, dryrun: bool) -> Self {
+        Self { dryrun, ..self }
+    }
+
+    pub fn with_condition(self, condition: bool) -> Self {
+        Self { condition, ..self }
     }
 }
 
 impl Default for EvalOptions {
     fn default() -> Self {
         Self {
-            semantics: Semantics::Iterator,
-            optimizer: Optimizer::ARQPF,
+            optimizer: Optimizer::default(),
+            condition: false,
             dryrun: false,
+            log: true,
         }
     }
 }
@@ -48,13 +46,14 @@ impl Default for EvalOptions {
 impl Display for EvalOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Evaluation Options:\n")?;
-        f.write_str(&format!("Semantics: {}\n", self.semantics))?;
         f.write_str(&format!("Optimizer: {}\n", self.optimizer))?;
-        f.write_str(&format!("Dry-Run: {}\n", self.dryrun))
+        f.write_str(&format!("Filter condition analysis: {}\n", self.condition))?;
+        f.write_str(&format!("Dry-Run: {}\n", self.dryrun))?;
+        f.write_str(&format!("Logging: {}\n", self.log))
     }
 }
 
-#[derive(Clone, Copy, ValueEnum, Hash, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, ValueEnum, Hash, PartialEq, Eq, Debug, Default)]
 pub enum Optimizer {
     // Do not change the given query
     Off,
@@ -66,16 +65,23 @@ pub enum Optimizer {
     Fixed,
 
     // Use the probabilistic framework selectivity estimation to order triples
-    ARQPF,
+    Arqpf,
+
+    // Similar to ARQ/PF, but also use variable distribution statistics
+    Arqpfc,
 
     // Use the probabilistic framework selectivity estimation to order triples
-    ARQPFJ,
+    #[default]
+    Arqpfj,
+
+    // Similar to ARQ/PFJ, but also use variable distribution statistics
+    Arqpfjc,
 
     // Use Variable Counting to optimize queries
-    ARQVC,
+    Arqvc,
 
     // Use Variable Counting to optimize queries
-    ARQVCP,
+    Arqvcp,
 }
 
 impl Display for Optimizer {
@@ -84,25 +90,12 @@ impl Display for Optimizer {
             Optimizer::Off => f.write_str("Off"),
             Optimizer::Random => f.write_str("Random"),
             Optimizer::Fixed => f.write_str("Fixed"),
-            Optimizer::ARQPF => f.write_str("ARQ/PF"),
-            Optimizer::ARQPFJ => f.write_str("ARQ/PFJ"),
-            Optimizer::ARQVC => f.write_str("ARQ/VC"),
-            Optimizer::ARQVCP => f.write_str("ARQ/VCP"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum Semantics {
-    Iterator,
-    Collection,
-}
-
-impl Display for Semantics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Semantics::Iterator => f.write_str("Iterator"),
-            Semantics::Collection => f.write_str("Collection"),
+            Optimizer::Arqpf => f.write_str("ARQ/PF"),
+            Optimizer::Arqpfc => f.write_str("ARQ/PFC"),
+            Optimizer::Arqpfj => f.write_str("ARQ/PFJ"),
+            Optimizer::Arqpfjc => f.write_str("ARQ/PFJC"),
+            Optimizer::Arqvc => f.write_str("ARQ/VC"),
+            Optimizer::Arqvcp => f.write_str("ARQ/VCP"),
         }
     }
 }

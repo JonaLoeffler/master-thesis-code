@@ -5,79 +5,54 @@ use std::{cell::RefCell, rc::Rc};
 use std::{error::Error, fmt::Display};
 
 use crate::semantics::operations::{
-    filter::Filter,
-    join::{CollJoin, IterJoin, Join, NewJoin},
-    leftjoin::LeftJoin,
-    limit::{CollLimit, IterLimit, Limit, NewLimit},
-    minus::{CollMinus, IterMinus, Minus, NewMinus},
-    offset::Offset,
-    projection::Projection,
-    scan::{CollScan, IterScan, Scan},
-    union::Union,
-    Operation, OperationVisitor,
+    filter::Filter, join::Join, leftjoin::LeftJoin, limit::Limit, minus::Minus, offset::Offset,
+    projection::Projection, scan::Scan, union::Union, Operation, OperationVisitor,
 };
 
 use super::flatten::Flatten;
 
-pub(crate) struct AllPlans<'a, S, J, M, L> {
-    join: NewJoin<'a, S, J, M, L>,
-    minus: NewMinus<'a, S, J, M, L>,
-    limit: NewLimit<'a, S, J, M, L>,
-}
+pub(crate) struct AllPlans {}
 
-impl<'a> AllPlans<'a, CollScan, CollJoin, CollMinus, CollLimit> {
-    pub(crate) fn coll() -> Self {
-        Self {
-            join: Join::collection,
-            minus: Minus::collection,
-            limit: Limit::collection,
-        }
+impl AllPlans {
+    pub(crate) fn new() -> Self {
+        Self {}
     }
 }
 
-impl<'a> AllPlans<'a, IterScan<'a>, IterJoin, IterMinus, IterLimit> {
-    pub(crate) fn iter() -> Self {
-        Self {
-            join: Join::iterator,
-            minus: Minus::iterator,
-            limit: Limit::iterator,
-        }
-    }
-}
+type AllPlansResult<'a> = Result<Vec<Operation<'a>>, AllPlansError>;
 
-type AllPlansResult<'a, S, J, M, L> = Result<Vec<Operation<'a, S, J, M, L>>, AllPlansError>;
 #[derive(Debug)]
 pub enum AllPlansError {
     UnexpectedOperation,
+    TooManyScans(String),
 }
 impl Display for AllPlansError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AllPlansError::UnexpectedOperation => {
-                f.write_str(&format!("Unexpected operation in plan"))
-            }
+            AllPlansError::UnexpectedOperation => f.write_str("Unexpected operation in plan"),
+            AllPlansError::TooManyScans(e) => f.write_str(e),
         }
     }
 }
 impl Error for AllPlansError {}
 
-impl<'a, S, J, M, L> OperationVisitor<'a, S, J, M, L, AllPlansResult<'a, S, J, M, L>>
-    for AllPlans<'a, S, J, M, L>
-where
-    S: Clone + PartialEq,
-    J: Clone + PartialEq,
-    M: Clone + PartialEq,
-    L: Clone + PartialEq,
-{
-    fn visit(&mut self, o: &'a Operation<'a, S, J, M, L>) -> AllPlansResult<'a, S, J, M, L> {
+impl<'a> OperationVisitor<'a, AllPlansResult<'a>> for AllPlans {
+    fn visit(&mut self, o: &'a Operation<'a>) -> AllPlansResult<'a> {
         if let Ok(ops) = Flatten::new().visit(o) {
-            let scans: Vec<Scan<'a, S, J, M, L>> = ops
+            let scans: Vec<Scan<'a>> = ops
                 .iter()
                 .map(|o| match o {
                     Operation::Scan(s) => Ok(s.clone()),
                     _ => Err(AllPlansError::UnexpectedOperation),
                 })
-                .collect::<Result<Vec<Scan<'a, S, J, M, L>>, AllPlansError>>()?;
+                .collect::<Result<Vec<Scan<'a>>, AllPlansError>>()?;
+
+            if scans.len() > 6 {
+                return Err(AllPlansError::TooManyScans(format!(
+                    "Too many scans ({}), cannot compute all possibilities",
+                    scans.len()
+                )));
+            }
 
             let trees: Vec<Rc<RefCell<TreeNode>>> = TreeNode::all_possible_fbt(2 * scans.len() - 1)
                 .iter()
@@ -96,14 +71,14 @@ where
                 scans.len()
             );
 
-            let scan_permutations: Vec<HashMap<usize, Scan<'a, S, J, M, L>>> = scans
+            let scan_permutations: Vec<HashMap<usize, Scan<'a>>> = scans
                 .iter()
                 .permutations(scans.len())
                 .map(|scans| {
-                    let mut res: HashMap<usize, Scan<S, J, M, L>> = HashMap::new();
+                    let mut res: HashMap<usize, Scan> = HashMap::new();
 
                     for (i, s) in scans.iter().enumerate() {
-                        res.insert(i + 1, s.clone().clone());
+                        res.insert(i + 1, (*s).clone());
                     }
 
                     res
@@ -112,10 +87,10 @@ where
 
             log::info!("Number of scan permutations: {}", scan_permutations.len());
 
-            let ops: Vec<Operation<S, J, M, L>> = trees
+            let ops: Vec<Operation> = trees
                 .into_iter()
                 .cartesian_product(scan_permutations.iter())
-                .map(|(t, s)| t.as_ref().borrow().to_operation(s, self.join))
+                .map(|(t, s)| t.as_ref().borrow().to_operation(s))
                 .collect();
 
             log::info!("Number of execution plans: {}", ops.len());
@@ -136,21 +111,15 @@ where
         }
     }
 
-    fn visit_scan(&mut self, _: &'a Scan<'a, S, J, M, L>) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_scan(&mut self, _: &'a Scan<'a>) -> AllPlansResult<'a> {
         panic!("Should have optimized before now")
     }
 
-    fn visit_join(
-        &mut self,
-        _: &'a Join<J, Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_join(&mut self, _: &'a Join<Operation<'a>>) -> AllPlansResult<'a> {
         panic!("Should have optimized before now")
     }
 
-    fn visit_projection(
-        &mut self,
-        o: &'a Projection<Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_projection(&mut self, o: &'a Projection<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.operation)?
             .into_iter()
@@ -158,10 +127,7 @@ where
             .collect())
     }
 
-    fn visit_union(
-        &mut self,
-        o: &'a Union<Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_union(&mut self, o: &'a Union<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.left)?
             .into_iter()
@@ -170,10 +136,7 @@ where
             .collect())
     }
 
-    fn visit_filter(
-        &mut self,
-        o: &'a Filter<Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_filter(&mut self, o: &'a Filter<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.operation)?
             .into_iter()
@@ -181,34 +144,25 @@ where
             .collect())
     }
 
-    fn visit_leftjoin(
-        &mut self,
-        o: &'a LeftJoin<Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.left)?
             .into_iter()
             .cartesian_product(self.visit(&o.right)?.into_iter())
-            .map(|(l, r)| Operation::LeftJoin(LeftJoin::new(l, r, self.join, self.minus)))
+            .map(|(l, r)| Operation::LeftJoin(LeftJoin::new(l, r)))
             .collect())
     }
 
-    fn visit_minus(
-        &mut self,
-        o: &'a Minus<M, Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_minus(&mut self, o: &'a Minus<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.left)?
             .into_iter()
             .cartesian_product(self.visit(&o.right)?.into_iter())
-            .map(|(l, r)| Operation::Minus((self.minus)(l, r)))
+            .map(|(l, r)| Operation::Minus(Minus::new(l, r)))
             .collect())
     }
 
-    fn visit_offset(
-        &mut self,
-        o: &'a Offset<Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+    fn visit_offset(&mut self, o: &'a Offset<Operation<'a>>) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.operation)?
             .into_iter()
@@ -218,12 +172,12 @@ where
 
     fn visit_limit(
         &mut self,
-        o: &'a crate::semantics::operations::limit::Limit<L, Operation<'a, S, J, M, L>>,
-    ) -> AllPlansResult<'a, S, J, M, L> {
+        o: &'a crate::semantics::operations::limit::Limit<Operation<'a>>,
+    ) -> AllPlansResult<'a> {
         Ok(self
             .visit(&o.operation)?
             .into_iter()
-            .map(|op| Operation::Limit((self.limit)(op, o.limit)))
+            .map(|op| Operation::Limit(Limit::new(op, o.limit)))
             .collect())
     }
 }
@@ -253,7 +207,7 @@ impl TreeNode {
     fn enumerate_leafs(&self, n: &mut usize) -> Option<Rc<RefCell<TreeNode>>> {
         let node = if self.is_leaf() {
             *n += 1;
-            TreeNode::new(n.clone())
+            TreeNode::new(*n)
         } else {
             let mut node = TreeNode::new(0);
             node.left = self.left.as_ref().unwrap().borrow().enumerate_leafs(n);
@@ -264,32 +218,19 @@ impl TreeNode {
         Some(Rc::new(RefCell::new(node)))
     }
 
-    fn to_operation<'a, S: Clone, J, M, L>(
-        &self,
-        scans: &HashMap<usize, Scan<'a, S, J, M, L>>,
-        join: NewJoin<'a, S, J, M, L>,
-    ) -> Operation<'a, S, J, M, L> {
+    fn to_operation<'a>(&self, scans: &HashMap<usize, Scan<'a>>) -> Operation<'a> {
         if self.is_leaf() {
             Operation::Scan(scans.get(&self.val).unwrap().clone())
         } else {
-            let left = self
-                .left
-                .as_ref()
-                .unwrap()
-                .borrow()
-                .to_operation(scans, join);
-
-            let right = self
-                .right
-                .as_ref()
-                .unwrap()
-                .borrow()
-                .to_operation(scans, join);
-
-            Operation::Join((join)(left, right))
+            Operation::Join(Join::new(
+                self.left.as_ref().unwrap().borrow().to_operation(scans),
+                self.right.as_ref().unwrap().borrow().to_operation(scans),
+            ))
         }
     }
 
+    /// This algorithm is taken and modified
+    /// [here](https://leetcode.com/problems/all-possible-full-binary-trees/solutions/2970045/just-a-runnable-solution/?languageTags=rust).
     fn all_possible_fbt(n: usize) -> TreeNodeResult {
         type Cache = HashMap<usize, TreeNodeResult>;
 

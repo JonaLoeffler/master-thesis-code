@@ -6,7 +6,10 @@ use std::{
     fmt::Display,
 };
 
-use super::{Expand, ExpandError};
+use super::{
+    expand::{Expand, ExpandError},
+    Literal,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Query {
@@ -17,7 +20,7 @@ pub struct Query {
 impl Display for Query {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (pn_prefix, iri_reference) in self.prologue.iter() {
-            f.write_str(&format!("PREFIX {}: {}\n", pn_prefix, iri_reference))?;
+            f.write_str(&format!("PREFIX {pn_prefix}: {iri_reference}\n"))?;
         }
 
         match &self.kind {
@@ -66,56 +69,8 @@ impl Display for Query {
 }
 
 impl Query {
-    pub fn expand(self) -> Result<Query, ExpandError> {
-        match self.kind {
-            Type::SelectQuery(v, e, m) => {
-                let e = e.expand(&self.prologue)?;
-
-                Ok(Query {
-                    prologue: self.prologue,
-                    kind: Type::SelectQuery(v, e, m),
-                })
-            }
-            Type::AskQuery(e, m) => {
-                let e = e.expand(&self.prologue)?;
-
-                Ok(Query {
-                    prologue: self.prologue,
-                    kind: Type::AskQuery(e, m),
-                })
-            }
-        }
-    }
-}
-
-impl Expand for Expression {
-    type Expandable = Expression;
-
-    fn expand(self, prefixes: &HashMap<String, String>) -> Result<Expression, ExpandError> {
-        match self {
-            Expression::Triple {
-                subject,
-                predicate,
-                object,
-            } => Ok(Expression::Triple {
-                subject: subject.expand(&prefixes)?,
-                predicate: predicate.expand(&prefixes)?,
-                object: object.expand(&prefixes)?,
-            }),
-            Expression::And(e1, e2) => Ok(Expression::And(
-                Box::new(e1.expand(&prefixes)?),
-                Box::new(e2.expand(&prefixes)?),
-            )),
-            Expression::Union(e1, e2) => Ok(Expression::Union(
-                Box::new(e1.expand(&prefixes)?),
-                Box::new(e2.expand(&prefixes)?),
-            )),
-            Expression::Optional(e1, e2) => Ok(Expression::Optional(
-                Box::new(e1.expand(&prefixes)?),
-                Box::new(e2.expand(&prefixes)?),
-            )),
-            Expression::Filter(e, r) => Ok(Expression::Filter(Box::new(e.expand(&prefixes)?), r)),
-        }
+    pub fn expand(&self) -> Result<Query, ExpandError> {
+        QueryVisitor::visit(&mut Expand::new(self.prologue.clone()), self)
     }
 }
 
@@ -125,7 +80,7 @@ pub(crate) enum Type {
     AskQuery(Expression, SolutionModifier),
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Default)]
 pub(crate) struct SolutionModifier {
     pub(crate) limit: Option<usize>,
     pub(crate) offset: Option<usize>,
@@ -138,15 +93,6 @@ impl SolutionModifier {
 
     pub(crate) fn with_offset(&mut self, offset: usize) {
         self.offset = Some(offset);
-    }
-}
-
-impl Default for SolutionModifier {
-    fn default() -> Self {
-        Self {
-            limit: None,
-            offset: None,
-        }
     }
 }
 
@@ -204,7 +150,7 @@ impl From<&str> for Variable {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub(crate) struct Variables(Vec<Variable>);
 
 impl Variables {
@@ -250,11 +196,7 @@ impl Display for Variables {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) enum Expression {
-    Triple {
-        subject: Subject,
-        predicate: Predicate,
-        object: Object,
-    },
+    Triple(Box<Subject>, Box<Predicate>, Box<Object>),
     And(Box<Expression>, Box<Expression>),
     Union(Box<Expression>, Box<Expression>),
     Optional(Box<Expression>, Box<Expression>),
@@ -264,11 +206,7 @@ pub(crate) enum Expression {
 impl Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Expression::Triple {
-                subject,
-                predicate,
-                object,
-            } => {
+            Expression::Triple(subject, predicate, object) => {
                 f.write_str("  {")?;
                 subject.fmt(f)?;
                 f.write_str(" ")?;
@@ -322,7 +260,7 @@ impl FromIterator<Expression> for Expression {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub(crate) enum Subject {
     I(Iri),
     V(Variable),
@@ -331,24 +269,13 @@ pub(crate) enum Subject {
 impl Display for Subject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Subject::I(u) => f.write_str(&format!("{}", u)),
-            Subject::V(v) => f.write_str(&format!("{}", v.name)),
+            Subject::I(u) => f.write_str(&format!("{u}")),
+            Subject::V(v) => f.write_str(&v.name.to_string()),
         }
     }
 }
 
-impl Expand for Subject {
-    type Expandable = Subject;
-
-    fn expand(self, prefixes: &HashMap<String, String>) -> Result<Subject, ExpandError> {
-        match self {
-            Subject::I(s) => Ok(Subject::I(s.expand(&prefixes)?)),
-            Subject::V(v) => Ok(Subject::V(v)),
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub(crate) enum Predicate {
     I(Iri),
     V(Variable),
@@ -357,26 +284,15 @@ pub(crate) enum Predicate {
 impl Display for Predicate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Predicate::I(u) => f.write_str(&format!("{}", u)),
-            Predicate::V(v) => f.write_str(&format!("{}", v.name)),
+            Predicate::I(u) => f.write_str(&format!("{u}")),
+            Predicate::V(v) => f.write_str(&v.name.to_string()),
         }
     }
 }
 
-impl Expand for Predicate {
-    type Expandable = Predicate;
-
-    fn expand(self, prefixes: &HashMap<String, String>) -> Result<Predicate, ExpandError> {
-        match self {
-            Predicate::I(s) => Ok(Predicate::I(s.expand(prefixes)?)),
-            Predicate::V(v) => Ok(Predicate::V(v)),
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub(crate) enum Object {
-    L(String),
+    L(Literal),
     I(Iri),
     V(Variable),
 }
@@ -384,28 +300,18 @@ pub(crate) enum Object {
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Object::L(l) => f.write_str(&format!("{}", l)),
-            Object::I(u) => f.write_str(&format!("{}", u)),
-            Object::V(v) => f.write_str(&format!("{}", v.name)),
+            Object::L(l) => f.write_str(&format!("{l}")),
+            Object::I(u) => f.write_str(&format!("{u}")),
+            Object::V(v) => f.write_str(&v.name.to_string()),
         }
     }
 }
 
-impl Expand for Object {
-    type Expandable = Object;
-
-    fn expand(self, prefixes: &HashMap<String, String>) -> Result<Object, ExpandError> {
-        match self {
-            Object::I(s) => Ok(Object::I(s.expand(prefixes)?)),
-            Object::V(v) => Ok(Object::V(v)),
-            Object::L(l) => Ok(Object::L(l)),
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub(crate) enum Condition {
     Equals(Object, Object),
+    LT(Object, Object),
+    GT(Object, Object),
     Bound(Variable),
     Not(Box<Condition>),
     And(Box<Condition>, Box<Condition>),
@@ -415,11 +321,13 @@ pub(crate) enum Condition {
 impl Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Condition::Equals(o1, o2) => f.write_str(&format!("{} = {}", o1, o2)),
-            Condition::Bound(v) => f.write_str(&format!("{}", v.name)),
-            Condition::Not(c) => f.write_str(&format!("¬({})", c)),
-            Condition::And(c1, c2) => f.write_str(&format!("({}) ∧ ({})", c1, c2)),
-            Condition::Or(c1, c2) => f.write_str(&format!("({}) ∨ ({})", c1, c2)),
+            Condition::Equals(o1, o2) => f.write_str(&format!("{o1} = {o2}")),
+            Condition::LT(o1, o2) => f.write_str(&format!("{o1} < {o2}")),
+            Condition::GT(o1, o2) => f.write_str(&format!("{o1} > {o2}")),
+            Condition::Bound(v) => f.write_str(&format!("BOUND ({})", v.name)),
+            Condition::Not(c) => f.write_str(&format!("¬({c})")),
+            Condition::And(c1, c2) => f.write_str(&format!("({c1}) ∧ ({c2})")),
+            Condition::Or(c1, c2) => f.write_str(&format!("({c1}) ∨ ({c2})")),
         }
     }
 }
@@ -432,22 +340,16 @@ pub(crate) trait QueryVisitor<'a, T> {
         }
     }
 
-    fn visit_select(
-        &mut self,
-        vars: &'a Variables,
-        expr: &'a Expression,
-        modifier: &'a SolutionModifier,
-    ) -> T;
+    fn visit_select(&mut self, v: &'a Variables, e: &'a Expression, m: &'a SolutionModifier) -> T;
+    fn visit_ask(&mut self, e: &'a Expression, m: &'a SolutionModifier) -> T;
 
-    fn visit_ask(&mut self, expr: &'a Expression, modifier: &'a SolutionModifier) -> T;
+    fn visit_modifier(&mut self, e: &'a Expression, m: &'a SolutionModifier) -> T;
+}
 
-    fn visit_expr(&mut self, o: &'a Expression) -> T {
+pub(crate) trait ExpressionVisitor<'a, T> {
+    fn visit(&mut self, o: &'a Expression) -> T {
         match o {
-            Expression::Triple {
-                subject,
-                predicate,
-                object,
-            } => self.visit_spo(subject, predicate, object),
+            Expression::Triple(s, p, o) => self.visit_spo(s, p, o),
             Expression::And(left, right) => self.visit_and(left, right),
             Expression::Union(left, right) => self.visit_union(left, right),
             Expression::Optional(left, right) => self.visit_optional(left, right),
@@ -455,15 +357,31 @@ pub(crate) trait QueryVisitor<'a, T> {
         }
     }
 
-    fn visit_spo(
-        &mut self,
-        subject: &'a Subject,
-        predicate: &'a Predicate,
-        object: &'a Object,
-    ) -> T;
+    fn visit_spo(&mut self, s: &'a Subject, p: &'a Predicate, o: &'a Object) -> T;
     fn visit_and(&mut self, left: &'a Expression, right: &'a Expression) -> T;
     fn visit_union(&mut self, left: &'a Expression, right: &'a Expression) -> T;
     fn visit_optional(&mut self, left: &'a Expression, right: &'a Expression) -> T;
     fn visit_filter(&mut self, expr: &'a Expression, cond: &'a Condition) -> T;
-    fn visit_modifier(&mut self, expr: &'a Expression, modifier: &'a SolutionModifier) -> T;
+}
+
+pub(crate) trait ConditionVisitor<T> {
+    fn visit(&mut self, c: &Condition) -> T {
+        match c {
+            Condition::Equals(o1, o2) => self.visit_equals(o1, o2),
+            Condition::GT(o1, o2) => self.visit_gt(o1, o2),
+            Condition::LT(o1, o2) => self.visit_lt(o1, o2),
+            Condition::Bound(v) => self.visit_bound(v),
+            Condition::Not(e) => self.visit_not(e),
+            Condition::And(e1, e2) => self.visit_and(e1, e2),
+            Condition::Or(e1, e2) => self.visit_or(e1, e2),
+        }
+    }
+
+    fn visit_equals(&mut self, o1: &Object, o2: &Object) -> T;
+    fn visit_gt(&mut self, o1: &Object, o2: &Object) -> T;
+    fn visit_lt(&mut self, o1: &Object, o2: &Object) -> T;
+    fn visit_bound(&mut self, v: &Variable) -> T;
+    fn visit_not(&mut self, c: &Condition) -> T;
+    fn visit_and(&mut self, c1: &Condition, c2: &Condition) -> T;
+    fn visit_or(&mut self, c1: &Condition, c2: &Condition) -> T;
 }

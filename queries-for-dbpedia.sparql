@@ -1,0 +1,88 @@
+# Query 1
+# Retrieve multiple objects from exported the DBPedia RDF Document
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbp: <http://dbpedia.org/property/>
+SELECT ?album ?name ?wikilength ?released ?length
+WHERE {
+    ?album rdfs:label ?name .
+    ?album dbp:released ?released .
+    ?album dbo:wikiPageLength ?wikilength .
+    ?album dbp:type dbr:Album .
+    ?album dbp:length ?length
+    FILTER (?length > 200)
+}
+
+# Query 2
+# The same as Query 1 but use FILTER to showcase filter optimization
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbp: <http://dbpedia.org/property/>
+SELECT ?album ?name ?wikilength ?released ?length
+WHERE {
+    ?album rdfs:label ?name .
+    ?album dbp:released ?released .
+    ?album dbo:wikiPageLength ?wikilength .
+    ?album dbp:type dbr:Album .
+    ?album dbp:length ?length
+    FILTER ((?length > 200) && (?length < 220))
+}
+
+# Query 3
+# Introduce more patterns and also more resources of different types.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX db: <http://dbpedia.org/>
+SELECT ?artist ?song ?title ?album ?length ?genre ?artist
+WHERE {
+    ?song rdf:type dbo:Song .
+    ?album rdf:type dbo:Album .
+    ?song dbo:artist ?artist .
+    ?song dbo:album ?album .
+    ?song dbp:length ?length .
+    ?song dbo:genre ?genre .
+    ?song dbp:title ?title .
+    FILTER ((?length > 200) && (?length < 220))
+}
+
+# Query 4
+# Filter for another numeric resource.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX db: <http://dbpedia.org/>
+SELECT ?album  ?recorded ?artist ?type
+WHERE {
+  ?album rdf:type dbo:Album .
+  ?album dbp:artist ?artist .
+  ?album dbp:recorded ?recorded
+  FILTER ((?recorded > 1980) &&(?recorded < 2000))
+}
+
+# Query 5
+# Query 5 FILTER on multiple different variables
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX dbp: <http://dbpedia.org/property/>
+prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?work ?previous ?artist ?genre ?recorded ?runtime ?previousruntime
+WHERE {
+  ?work rdf:type dbo:Work .
+  ?previous dbo:previousWork ?work.
+  ?work dbo:artist ?artist .
+  ?previous rdf:type dbo:Song .
+  ?work dbo:genre ?genre.
+  ?previous dbo:runtime ?previousruntime.
+  ?work dbo:runtime ?runtime.
+  ?work dbp:recorded ?recorded
+  FILTER (((?runtime > 200) && (?previousruntime < 220)) && (?recorded > 2000))
+}

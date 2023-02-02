@@ -1,200 +1,77 @@
 use core::fmt;
-use std::{collections::HashMap, fmt::Display, mem};
+use std::{collections::HashMap, fmt::Display, hash::Hash};
 
 use crate::{
     semantics::{
         mapping::{Mapping, MappingSet},
-        selectivity::{Selectivity, SelectivityError},
+        selectivity::{Selectivity, SelectivityError, SelectivityResult},
     },
-    syntax::{database, query},
+    syntax::{
+        database,
+        query::{self, Object, Predicate, Subject},
+    },
 };
 use iter_progress::ProgressableIter;
 
-use super::{visitors::bound::BoundVars, Execute, Operation, OperationVisitor};
-
-pub(crate) type NewJoin<'a, S, J, M, L> =
-    fn(Operation<'a, S, J, M, L>, Operation<'a, S, J, M, L>) -> Join<J, Operation<'a, S, J, M, L>>;
+use super::{
+    visitors::{condition::ConditionInfo, printer::Printer},
+    Operation, OperationVisitor,
+};
 
 #[derive(Debug, Clone)]
-pub(crate) struct Join<J, O: Display> {
+pub(crate) struct Join<O: Display> {
     pub(super) left: Box<O>,
     pub(super) right: Box<O>,
-    join_vars: query::Variables,
-    kind: J,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CollJoin;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IterJoin {
+    pub(super) join_vars: query::Variables,
     hashes: HashMap<String, MappingSet>,
     current_bucket: MappingSet,
 }
 
-impl<'a, S, J, M, L> Join<J, Operation<'a, S, J, M, L>> {
+impl<O: Hash + Display> Hash for Join<O> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.left.hash(state);
+        self.right.hash(state);
+    }
+}
+
+impl<'a> Join<Operation<'a>> {
     pub(crate) fn join_vars(&self) -> &query::Variables {
         &self.join_vars
     }
 }
 
-impl<'a, S, J, M, L> Join<IterJoin, Operation<'a, S, J, M, L>> {
-    pub(crate) fn iterator(
-        left: Operation<'a, S, J, M, L>,
-        right: Operation<'a, S, J, M, L>,
-    ) -> Self {
-        let mut visitor = BoundVars::new();
-        let left_vars = visitor.visit(&left);
-        let right_vars = visitor.visit(&right);
-
-        let join_vars = left_vars.intersection(&right_vars).cloned().collect();
+impl<'a> Join<Operation<'a>> {
+    pub(crate) fn new(left: Operation<'a>, right: Operation<'a>) -> Self {
+        let join_vars = left
+            .bound_vars()
+            .intersection(&right.bound_vars())
+            .cloned()
+            .collect();
 
         Self {
             left: Box::new(left),
             right: Box::new(right),
             join_vars,
-            kind: IterJoin {
-                hashes: HashMap::new(),
-                current_bucket: Vec::new(),
-            },
+            hashes: HashMap::new(),
+            current_bucket: Vec::new(),
         }
     }
 }
 
-impl<'a, S, J, M, L> Join<CollJoin, Operation<'a, S, J, M, L>> {
-    pub(crate) fn collection(
-        left: Operation<'a, S, J, M, L>,
-        right: Operation<'a, S, J, M, L>,
-    ) -> Self {
-        let mut visitor = BoundVars::new();
-        let left_vars = visitor.visit(&left);
-        let right_vars = visitor.visit(&right);
-
-        let join_vars = left_vars.intersection(&right_vars).cloned().collect();
-
-        Self {
-            left: Box::new(left),
-            right: Box::new(right),
-            join_vars,
-            kind: CollJoin,
-        }
-    }
-}
-
-impl<'a, J, O: Display + Eq> Eq for Join<J, O> {}
-impl<'a, J, O: Display + PartialEq> PartialEq for Join<J, O> {
+impl<O: Display + Eq> Eq for Join<O> {}
+impl<O: Display + PartialEq> PartialEq for Join<O> {
     fn eq(&self, other: &Self) -> bool {
         self.left == other.left && self.right == other.right
     }
 }
 
-impl<'a, S, J, M, L> fmt::Display for Join<J, Operation<'a, S, J, M, L>> {
+impl<'a> fmt::Display for Join<Operation<'a>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bound = BoundVars::new()
-            .visit_join(self)
-            .iter()
-            .cloned()
-            .collect::<query::Variables>();
-
-        f.write_str(&format!("JOIN Bound: {}, Join: {}", bound, self.join_vars,))?;
-
-        f.write_str(&format!("\n{}", self.left).replace("\n", "\n  "))?;
-        f.write_str(&format!("\n{}", self.right).replace("\n", "\n  "))?;
-
-        Ok(())
+        f.write_str(&Printer::new().visit_join(self))
     }
 }
 
-impl<'a, O> Execute for Join<CollJoin, O>
-where
-    O: Execute,
-    O: Display,
-{
-    fn execute(&self) -> MappingSet {
-        let left = self.left.execute();
-        let right = self.right.execute();
-
-        let o1 = left;
-        let o2 = right;
-        log::debug!("Joining {} {} ", o1.len(), o2.len());
-
-        log::debug!("Joining on common keys {}", self.join_vars);
-        log::debug!("Hash join build phase");
-
-        let mut hashes: HashMap<String, MappingSet> = HashMap::new();
-
-        let mut o1 = o1;
-        let mut o2 = o2;
-
-        if o1.len() > o2.len() {
-            mem::swap(&mut o1, &mut o2);
-        }
-
-        log::debug!("Building hash join table from {} entries", o1.len());
-
-        o1.into_iter().progress().for_each(|(state, m)| {
-            state.do_every_n_sec(5., |s| {
-                log::debug!(
-                    "{:.2}% done with building hash join table, {:.2} per sec.",
-                    s.percent().unwrap(),
-                    s.rate()
-                );
-            });
-
-            let key = m.hash_map_key(&self.join_vars);
-
-            if let Some(v) = hashes.get_mut(&key) {
-                v.push(m);
-            } else {
-                hashes.insert(key, vec![m]);
-            };
-        });
-
-        log::debug!("Hash join table entries: {}", hashes.len());
-
-        log::debug!("Hash join probe phase");
-
-        let mappings: MappingSet = o2
-            .into_iter()
-            .progress()
-            .flat_map(|(state, m)| {
-                state.do_every_n_sec(5., |s| {
-                    log::debug!(
-                        "{:.2}% done with hash join probe, {:.2} per sec.",
-                        s.percent().unwrap(),
-                        s.rate()
-                    );
-                });
-
-                let key = m.hash_map_key(&self.join_vars);
-
-                let or = Vec::new();
-
-                hashes
-                    .get(&key)
-                    .unwrap_or(&or)
-                    .into_iter()
-                    .map(move |other| {
-                        let mut next = Mapping::new();
-                        for (k, v) in m.items.iter() {
-                            next.insert(k.clone(), v.clone());
-                        }
-                        for (k, v) in other.items.iter() {
-                            next.insert(k.clone(), v.clone());
-                        }
-                        next
-                    })
-                    .collect::<MappingSet>()
-            })
-            .collect();
-
-        log::debug!("Join produces {} mappings", mappings.len());
-
-        mappings
-    }
-}
-
-impl<'a, O> Iterator for Join<IterJoin, O>
+impl<O> Iterator for Join<O>
 where
     O: Iterator<Item = Mapping>,
     O: Display,
@@ -204,23 +81,23 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         log::trace!("Join next()");
 
-        if self.kind.hashes.is_empty() {
+        if self.hashes.is_empty() {
             log::debug!("Building hash table");
 
-            while let Some(m) = self.left.next() {
+            for m in self.left.by_ref() {
                 let key = m.hash_map_key(&self.join_vars);
 
-                if let Some(v) = self.kind.hashes.get_mut(&key) {
+                if let Some(v) = self.hashes.get_mut(&key) {
                     v.push(m);
                 } else {
-                    self.kind.hashes.insert(key, vec![m]);
+                    self.hashes.insert(key, vec![m]);
                 };
             }
 
-            log::debug!("Hash table has {} entries", self.kind.hashes.len());
+            log::debug!("Hash table has {} entries", self.hashes.len());
         }
 
-        while self.kind.current_bucket.is_empty() {
+        while self.current_bucket.is_empty() {
             log::debug!("Building next bucket");
 
             if let Some(m) = self.right.next() {
@@ -229,12 +106,11 @@ where
 
                 let or = Vec::new();
 
-                self.kind.current_bucket = self
-                    .kind
+                self.current_bucket = self
                     .hashes
                     .get(&key)
                     .unwrap_or(&or)
-                    .into_iter()
+                    .iter()
                     .progress()
                     .map(move |(state, other)| {
                         state.do_every_n_sec(5., |s| {
@@ -259,10 +135,10 @@ where
                 break;
             }
 
-            log::debug!("Bucket now has {} entries", self.kind.current_bucket.len());
+            log::debug!("Bucket now has {} entries", self.current_bucket.len());
         }
 
-        if let Some(result) = self.kind.current_bucket.pop() {
+        if let Some(result) = self.current_bucket.pop() {
             log::trace!("Join next() returns {result}");
             Some(result)
         } else {
@@ -272,16 +148,95 @@ where
     }
 }
 
-impl<'a, S, J, M, L> Selectivity for Join<J, Operation<'a, S, J, M, L>> {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
-        Ok(self.left.sel_vc()? * self.right.sel_vc()?)
+pub(crate) enum JoinType {
+    SubjectSubject,
+    SubjectObject,
+    SubjectPredicate,
+    ObjectObject,
+    UnboundOrHigherJoin,
+}
+
+impl<'a> Join<Operation<'a>> {
+    pub(crate) fn join_type(&self) -> Vec<JoinType> {
+        if let (Operation::Scan(left), Operation::Scan(right)) = (&*self.left, &*self.right) {
+            let mut types = Vec::new();
+
+            if let (Object::V(l), Object::V(r)) = (&left.object, &right.object) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::ObjectObject);
+                }
+            }
+            if let (Subject::V(l), Subject::V(r)) = (&left.subject, &right.subject) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectSubject);
+                }
+            }
+
+            if let (Subject::V(l), Object::V(r)) = (&left.subject, &right.object) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectObject);
+                }
+            }
+            if let (Object::V(l), Subject::V(r)) = (&left.object, &right.subject) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectObject);
+                }
+            }
+
+            if let (Subject::V(l), Subject::V(r)) = (&left.subject, &right.subject) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectSubject);
+                }
+            }
+
+            if let (Subject::V(l), Predicate::V(r)) = (&left.subject, &right.predicate) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectPredicate);
+                }
+            }
+            if let (Predicate::V(l), Subject::V(r)) = (&left.predicate, &right.subject) {
+                if l == r && self.join_vars.iter().any(|j| j == l) {
+                    types.push(JoinType::SubjectPredicate);
+                }
+            }
+
+            if !types.is_empty() {
+                return types;
+            }
+        }
+
+        vec![JoinType::UnboundOrHigherJoin]
+    }
+}
+
+impl<'a> Selectivity for Join<Operation<'a>> {
+    fn sel_vc(&self) -> SelectivityResult {
+        let factor: f64 = self
+            .join_type()
+            .iter()
+            .map(|t| match t {
+                JoinType::SubjectPredicate => 0.25,
+
+                JoinType::SubjectSubject => 0.5,
+
+                JoinType::ObjectObject => 0.75,
+                JoinType::SubjectObject => 0.75,
+
+                JoinType::UnboundOrHigherJoin => 1.0,
+            })
+            .fold(1.0, |a, b| a.min(b));
+
+        Ok(factor * self.left.sel_vc()? * self.right.sel_vc()?)
     }
 
-    fn sel_vcp(&self) -> Result<f32, SelectivityError> {
+    fn sel_vcp(&self) -> SelectivityResult {
         if let (Operation::Scan(l), Operation::Scan(r)) = (self.left.as_ref(), self.right.as_ref())
         {
-            if let (query::Subject::V(v1), query::Subject::V(v2)) = (&l.subject, &r.subject) {
-                if v1 != v2 {
+            if let (Subject::V(_), Subject::V(_)) = (&l.subject, &r.subject) {
+                if match l.object {
+                    Object::L(_) | Object::I(_) => matches!(r.object, Object::L(_) | Object::I(_)),
+                    _ => false,
+                } {
                     return Ok(1.0);
                 }
             }
@@ -290,11 +245,7 @@ impl<'a, S, J, M, L> Selectivity for Join<J, Operation<'a, S, J, M, L>> {
         self.sel_vc()
     }
 
-    fn sel_pf(&self, s: &database::Summary) -> Result<f32, SelectivityError> {
-        if self.join_vars.is_empty() {
-            return Err(SelectivityError::NoSelectivityForJoin);
-        }
-
+    fn sel_pf(&self, s: &database::Summary) -> SelectivityResult {
         let leftscan = if let Operation::Scan(leftscan) = &*self.left {
             leftscan
         } else {
@@ -307,25 +258,96 @@ impl<'a, S, J, M, L> Selectivity for Join<J, Operation<'a, S, J, M, L>> {
             return Err(SelectivityError::NoSelectivityForJoin);
         };
 
-        let leftsize = leftscan.db.triples().len() as f32;
-        let rightsize = rightscan.db.triples().len() as f32;
-
-        let s_p = leftsize * rightsize;
-
-        let factor = match leftscan.object {
-            query::Object::L(_) | query::Object::I(_) => (&leftscan.predicate, &leftscan.object)
-                .sel_pf(s)
-                .unwrap_or(1.0),
-            query::Object::V(_) => 1.0,
+        let p1 = if let Predicate::I(i) = &leftscan.predicate {
+            database::Predicate::I(i.to_owned())
+        } else {
+            return Ok(1.0);
         };
 
-        Ok(s_p / (s.t() * s.t()) * factor)
+        let p2 = if let Predicate::I(i) = &rightscan.predicate {
+            database::Predicate::I(i.to_owned())
+        } else {
+            return Ok(1.0);
+        };
+
+        let mut factors = Vec::new();
+        factors.push(match leftscan.object {
+            query::Object::L(_) | query::Object::I(_) => {
+                (&leftscan.predicate, &leftscan.object).sel_pf(s)?
+            }
+            query::Object::V(_) => 1.0,
+        });
+        factors.push(match rightscan.object {
+            query::Object::L(_) | query::Object::I(_) => {
+                (&rightscan.predicate, &rightscan.object).sel_pf(s)?
+            }
+            query::Object::V(_) => 1.0,
+        });
+        factors.push(match leftscan.subject {
+            query::Subject::I(_) => leftscan.sel_pf(s)?,
+            query::Subject::V(_) => 1.0,
+        });
+        factors.push(match rightscan.subject {
+            query::Subject::I(_) => rightscan.sel_pf(s)?,
+            query::Subject::V(_) => 1.0,
+        });
+
+        Ok(s.s_p(p1, p2) / (s.t() * s.t()) * factors.iter().product::<f64>())
     }
 
-    fn sel_pfj(&self, s: &database::Summary) -> Result<f32, SelectivityError> {
+    fn sel_pfc(&self, s: &database::Summary, i: &ConditionInfo) -> SelectivityResult {
+        let leftscan = if let Operation::Scan(leftscan) = &*self.left {
+            leftscan
+        } else {
+            return Err(SelectivityError::NoSelectivityForJoin);
+        };
+
+        let rightscan = if let Operation::Scan(rightscan) = &*self.right {
+            rightscan
+        } else {
+            return Err(SelectivityError::NoSelectivityForJoin);
+        };
+
+        let p1 = if let Predicate::I(i) = &leftscan.predicate {
+            database::Predicate::I(i.to_owned())
+        } else {
+            return Ok(1.0);
+        };
+
+        let p2 = if let Predicate::I(i) = &rightscan.predicate {
+            database::Predicate::I(i.to_owned())
+        } else {
+            return Ok(1.0);
+        };
+
+        let mut factors = Vec::new();
+        factors.push(match leftscan.object {
+            query::Object::L(_) | query::Object::I(_) => {
+                (&leftscan.predicate, &leftscan.object).sel_pf(s)?
+            }
+            query::Object::V(_) => 1.0,
+        });
+        factors.push(match rightscan.object {
+            query::Object::L(_) | query::Object::I(_) => {
+                (&rightscan.predicate, &rightscan.object).sel_pf(s)?
+            }
+            query::Object::V(_) => 1.0,
+        });
+        factors.push(leftscan.sel_pfc(s, i)?);
+        factors.push(rightscan.sel_pfc(s, i)?);
+
+        Ok(s.s_p(p1, p2) / (s.t() * s.t()) * factors.iter().product::<f64>())
+    }
+
+    fn sel_pfj(&self, s: &database::Summary) -> SelectivityResult {
         if let (Operation::Scan(l), Operation::Scan(r)) = (&*self.left, &*self.right) {
-            if let (query::Subject::V(v1), query::Subject::V(v2)) = (&l.subject, &r.subject) {
-                if v1 != v2 {
+            if let (Subject::V(_), Subject::V(_)) = (&l.subject, &r.subject) {
+                let early_return = match l.object {
+                    Object::L(_) | Object::I(_) => matches!(r.object, Object::L(_) | Object::I(_)),
+                    _ => false,
+                };
+
+                if early_return {
                     return Ok(1.0);
                 }
             }
@@ -333,6 +355,31 @@ impl<'a, S, J, M, L> Selectivity for Join<J, Operation<'a, S, J, M, L>> {
             let join = self.sel_pf(s)?;
             let left = l.sel_pfj(s)?;
             let right = r.sel_pfj(s)?;
+
+            let more_selective = left.min(right);
+
+            return Ok(join * more_selective);
+        }
+
+        Err(SelectivityError::NoSelectivityForJoin)
+    }
+
+    fn sel_pfjc(&self, s: &database::Summary, i: &ConditionInfo) -> SelectivityResult {
+        if let (Operation::Scan(l), Operation::Scan(r)) = (&*self.left, &*self.right) {
+            if let (Subject::V(_), Subject::V(_)) = (&l.subject, &r.subject) {
+                let early_return = match l.object {
+                    Object::L(_) | Object::I(_) => matches!(r.object, Object::L(_) | Object::I(_)),
+                    _ => false,
+                };
+
+                if early_return {
+                    return Ok(1.0);
+                }
+            }
+
+            let join = self.sel_pfc(s, i)?;
+            let left = l.sel_pfjc(s, i)?;
+            let right = r.sel_pfjc(s, i)?;
 
             let more_selective = left.min(right);
 

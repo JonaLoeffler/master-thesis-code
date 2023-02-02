@@ -31,11 +31,7 @@ pub enum QueryType {
 }
 
 pub enum Expression {
-    Triple {
-        subject: Subject,
-        predicate: Predicate,
-        object: Object,
-    },
+    Triple(Subject, Predicate, Object),
     And(Box<Expression>, Box<Expression>),
     Union(Box<Expression>, Box<Expression>),
     Optional(Box<Expression>, Box<Expression>),
@@ -49,6 +45,8 @@ pub struct Modifier {
 
 pub enum Condition {
     Equals(Object, Object),
+    LT(Object, Object),
+    GT(Object, Object),
     Bound(Variable),
     Not(Box<Condition>),
     And(Box<Condition>, Box<Condition>),

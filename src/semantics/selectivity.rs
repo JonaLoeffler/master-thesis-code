@@ -1,13 +1,14 @@
 use std::fmt::Display;
 
-use log::debug;
 use rand::distributions::Uniform;
 use rand::{thread_rng, Rng};
 
 use crate::syntax::{
     database::{self, Summary},
-    query::{Expression, Object, Predicate, Query, Subject, Type},
+    query::{Object, Predicate, Subject},
 };
+
+use super::operations::visitors::condition::ConditionInfo;
 
 #[derive(Clone)]
 pub enum SelectivityEstimator<'a> {
@@ -21,16 +22,22 @@ pub enum SelectivityEstimator<'a> {
     Fixed,
 
     // Use the probabilistic framework selectivity estimation to order triples
-    ARQPF(&'a Summary),
+    Arqpf(&'a Summary),
+
+    // Similar to ARQ/PF, but also use variable distribution statistics
+    Arqpfc(&'a Summary, &'a ConditionInfo),
 
     // Use the probabilistic framework selectivity estimation to order triples
-    ARQPFJ(&'a Summary),
+    Arqpfj(&'a Summary),
+
+    // Similar to ARQ/PFJ, but also use variable distribution statistics
+    Arqpfjc(&'a Summary, &'a ConditionInfo),
 
     // Use Variable Counting to optimize queries
-    ARQVC,
+    Arqvc,
 
     // Use Variable Counting to optimize queries
-    ARQVCP,
+    Arqvcp,
 }
 
 impl<'a> Display for SelectivityEstimator<'a> {
@@ -39,58 +46,29 @@ impl<'a> Display for SelectivityEstimator<'a> {
             SelectivityEstimator::Off => f.write_str("Off"),
             SelectivityEstimator::Random => f.write_str("Random"),
             SelectivityEstimator::Fixed => f.write_str("Fixed"),
-            SelectivityEstimator::ARQPF(_) => f.write_str("ARQ/PF"),
-            SelectivityEstimator::ARQPFJ(_) => f.write_str("ARQ/PFJ"),
-            SelectivityEstimator::ARQVC => f.write_str("ARQ/VC"),
-            SelectivityEstimator::ARQVCP => f.write_str("ARQ/VCP"),
+            SelectivityEstimator::Arqpf(_) => f.write_str("ARQ/PF"),
+            SelectivityEstimator::Arqpfc(_, _) => f.write_str("ARQ/PFC"),
+            SelectivityEstimator::Arqpfj(_) => f.write_str("ARQ/PFJ"),
+            SelectivityEstimator::Arqpfjc(_, _) => f.write_str("ARQ/PFJC"),
+            SelectivityEstimator::Arqvc => f.write_str("ARQ/VC"),
+            SelectivityEstimator::Arqvcp => f.write_str("ARQ/VCP"),
         }
     }
 }
 
 impl<'a> SelectivityEstimator<'a> {
-    pub(crate) fn selectivity(
-        &self,
-        item: Box<&(dyn Selectivity + 'a)>,
-    ) -> Result<f32, SelectivityError> {
+    pub(crate) fn selectivity(&self, item: &(dyn Selectivity + 'a)) -> SelectivityResult {
         match self {
             SelectivityEstimator::Off => panic!("No selectivity for OFF Optimizer"),
             SelectivityEstimator::Random => item.sel_random(),
             SelectivityEstimator::Fixed => item.sel_fixed(),
-            SelectivityEstimator::ARQPF(summary) => item.sel_pf(summary),
-            SelectivityEstimator::ARQPFJ(summary) => item.sel_pfj(summary),
-            SelectivityEstimator::ARQVC => item.sel_vc(),
-            SelectivityEstimator::ARQVCP => item.sel_vcp(),
+            SelectivityEstimator::Arqpf(summary) => item.sel_pf(summary),
+            SelectivityEstimator::Arqpfc(summary, infos) => item.sel_pfc(summary, infos),
+            SelectivityEstimator::Arqpfj(summary) => item.sel_pfj(summary),
+            SelectivityEstimator::Arqpfjc(summary, infos) => item.sel_pfjc(summary, infos),
+            SelectivityEstimator::Arqvc => item.sel_vc(),
+            SelectivityEstimator::Arqvcp => item.sel_vcp(),
         }
-    }
-}
-
-pub(crate) trait Selectivity {
-    fn sel_random(&self) -> Result<f32, SelectivityError> {
-        Ok(thread_rng().sample(Uniform::new(0.0, 1.0)))
-    }
-
-    fn sel_fixed(&self) -> Result<f32, SelectivityError> {
-        Ok(1.0)
-    }
-
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
-        log::warn!("Hit default implementation for sel_vc");
-        Err(SelectivityError::NonConjunctiveStructure)
-    }
-
-    fn sel_vcp(&self) -> Result<f32, SelectivityError> {
-        log::warn!("Hit default implementation for sel_vcp");
-        Err(SelectivityError::NonConjunctiveStructure)
-    }
-
-    fn sel_pf(&self, _s: &database::Summary) -> Result<f32, SelectivityError> {
-        log::warn!("Hit default implementation for sel_pf");
-        Err(SelectivityError::NonConjunctiveStructure)
-    }
-
-    fn sel_pfj(&self, _s: &database::Summary) -> Result<f32, SelectivityError> {
-        log::warn!("Hit default implementation for sel_pfj");
-        Err(SelectivityError::NonConjunctiveStructure)
     }
 }
 
@@ -101,11 +79,53 @@ pub enum SelectivityError {
     NoSelectivityForJoin,
 }
 
+pub type SelectivityResult = Result<f64, SelectivityError>;
+
+pub(crate) trait Selectivity {
+    fn sel_random(&self) -> SelectivityResult {
+        Ok(thread_rng().sample(Uniform::new(0.0, 1.0)))
+    }
+
+    fn sel_fixed(&self) -> SelectivityResult {
+        Ok(1.0)
+    }
+
+    fn sel_vc(&self) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_vc");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+
+    fn sel_vcp(&self) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_vcp");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+
+    fn sel_pf(&self, _s: &database::Summary) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_pf");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+
+    fn sel_pfc(&self, _s: &database::Summary, _i: &ConditionInfo) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_pfc");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+
+    fn sel_pfj(&self, _s: &database::Summary) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_pfj");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+
+    fn sel_pfjc(&self, _s: &database::Summary, _i: &ConditionInfo) -> SelectivityResult {
+        log::warn!("Hit default implementation for sel_pfjc");
+        Err(SelectivityError::NonConjunctiveStructure)
+    }
+}
+
 impl Selectivity for Subject {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
+    fn sel_vc(&self) -> SelectivityResult {
         let bound = match self {
             Subject::I(_) => true,
-            Subject::V(_) => false, // TODO: ?
+            Subject::V(_) => false,
         };
 
         let result = if bound { 0.25 } else { 1.0 };
@@ -113,10 +133,10 @@ impl Selectivity for Subject {
         Ok(result)
     }
 
-    fn sel_pf(&self, s: &Summary) -> Result<f32, SelectivityError> {
+    fn sel_pf(&self, s: &Summary) -> SelectivityResult {
         let bound = match self {
             Subject::I(_) => true,
-            Subject::V(_) => false, // TODO: ?
+            Subject::V(_) => false,
         };
 
         let result = if bound { 1.0 / s.r() } else { 1.0 };
@@ -126,10 +146,10 @@ impl Selectivity for Subject {
 }
 
 impl Selectivity for Predicate {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
+    fn sel_vc(&self) -> SelectivityResult {
         let bound = match self {
             Predicate::I(_) => true,
-            Predicate::V(_) => false, // TODO: ?
+            Predicate::V(_) => false,
         };
 
         let result = if bound { 0.75 } else { 1.0 };
@@ -137,10 +157,10 @@ impl Selectivity for Predicate {
         Ok(result)
     }
 
-    fn sel_pf(&self, s: &Summary) -> Result<f32, SelectivityError> {
+    fn sel_pf(&self, s: &Summary) -> SelectivityResult {
         let predicate = match self {
             Predicate::I(u) => Some(database::Predicate::I(u.to_owned())),
-            Predicate::V(_) => None, // TODO: ?
+            Predicate::V(_) => None,
         };
 
         let result = if let Some(p) = predicate {
@@ -158,11 +178,10 @@ impl Selectivity for Predicate {
 }
 
 impl Selectivity for (&Predicate, &Object) {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
+    fn sel_vc(&self) -> SelectivityResult {
         let bound = match self.1 {
-            Object::L(_) => true,
-            Object::I(_) => true,
-            Object::V(_) => false, // TODO: ?
+            Object::L(_) | Object::I(_) => true,
+            Object::V(_) => false,
         };
 
         let result = if bound { 0.5 } else { 1.0 };
@@ -170,16 +189,16 @@ impl Selectivity for (&Predicate, &Object) {
         Ok(result)
     }
 
-    fn sel_pf(&self, s: &Summary) -> Result<f32, SelectivityError> {
+    fn sel_pf(&self, s: &Summary) -> SelectivityResult {
         let predicate = match self.0 {
             Predicate::I(u) => Some(database::Predicate::I(u.to_owned())),
-            Predicate::V(_) => None, // TODO: ?
+            Predicate::V(_) => None,
         };
 
         let object = match self.1 {
             Object::L(l) => Some(database::Object::L(l.to_owned())),
             Object::I(u) => Some(database::Object::I(u.to_owned())),
-            Object::V(_) => None, // TODO: ?
+            Object::V(_) => None,
         };
 
         let result = if let Some(o) = object {
@@ -196,78 +215,6 @@ impl Selectivity for (&Predicate, &Object) {
             Ok(result)
         } else {
             Err(SelectivityError::EncounteredNaNValue)
-        }
-    }
-}
-
-impl Selectivity for Query {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
-        match &self.kind {
-            Type::SelectQuery(_, e, _) => e.sel_vc(),
-            Type::AskQuery(e, _) => e.sel_vc(),
-        }
-    }
-
-    fn sel_pf(&self, s: &Summary) -> Result<f32, SelectivityError> {
-        match &self.kind {
-            Type::SelectQuery(_, e, _) => e.sel_pf(s),
-            Type::AskQuery(e, _) => e.sel_pf(s),
-        }
-    }
-}
-
-impl Selectivity for Expression {
-    fn sel_vc(&self) -> Result<f32, SelectivityError> {
-        match self {
-            Expression::Triple {
-                subject,
-                predicate,
-                object,
-            } => {
-                let sub = subject.sel_vc()?;
-                let pre = predicate.sel_vc()?;
-                let obj = (predicate, object).sel_vc()?;
-
-                debug!(
-                    "sel(s) = {:.5}, sel(p) = {:.5}, sel(o) = {:.5}, sel(t) = {:.5}",
-                    sub,
-                    pre,
-                    obj,
-                    sub * pre * obj
-                );
-
-                Ok(sub * pre * obj)
-            }
-            Expression::And(e1, e2) => Ok(e1.sel_vc()? * e2.sel_vc()?),
-            Expression::Union(_, _) => Err(SelectivityError::NonConjunctiveStructure),
-            Expression::Optional(_, _) => Err(SelectivityError::NonConjunctiveStructure),
-            Expression::Filter(_, _) => Err(SelectivityError::NonConjunctiveStructure),
-        }
-    }
-
-    fn sel_pf(&self, s: &Summary) -> Result<f32, SelectivityError> {
-        match self {
-            Expression::Triple {
-                subject,
-                predicate,
-                object,
-            } => {
-                let sub = subject.sel_pf(s)?;
-                let pre = predicate.sel_pf(s)?;
-                let obj = (predicate, object).sel_pf(s)?;
-
-                debug!(
-                    "sel(s) = {:.5}, sel(p) = {:.5}, sel(o) = {:.5}, sel(t) = {:.5}",
-                    sub,
-                    pre,
-                    obj,
-                    sub * pre * obj
-                );
-
-                Ok(sub * pre * obj)
-            }
-            Expression::And(e1, e2) => Ok(e1.sel_pf(s)? * e2.sel_pf(s)?),
-            _ => Err(SelectivityError::NonConjunctiveStructure),
         }
     }
 }

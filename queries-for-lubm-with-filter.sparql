@@ -1,0 +1,58 @@
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?X
+WHERE {
+  ?X ub:name "GraduateCourse9"
+}
+
+SELECT ?subject ?predicate ?object
+WHERE {
+  ?subject ?predicate ?object
+}
+LIMIT 100
+OFFSET 20
+
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?course ?name
+WHERE {
+  ?course rdf:type ub:Course.
+  ?course ub:name ?name .
+  FILTER ((?course = "Course1") || BOUND (?name))
+}
+
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?course ?name
+WHERE {
+  ?course rdf:type ub:Course.
+  ?course ub:name ?name .
+  FILTER BOUND (?course)
+}
+
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?course ?name
+WHERE {
+  ?course rdf:type ub:Course.
+  ?course ub:name ?name .
+  FILTER (?name = "Course1")
+}
+
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?course ?name
+WHERE {
+  ?course rdf:type ub:Course.
+  ?course ub:name ?name .
+  FILTER ((?name = "Course1") && !(?name = "Course2"))
+}
+
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ub: <http://swat.cse.lehigh.edu/onto/univ-bench.owl#>
+SELECT ?course ?name
+WHERE {
+  ?course rdf:type ub:Course.
+  ?course ub:name ?name .
+  FILTER ((?course = "Course1") && BOUND (?name))
+}

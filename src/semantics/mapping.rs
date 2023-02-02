@@ -78,13 +78,53 @@ impl Mapping {
                     query::Object::V(_) => false,
                 },
                 query::Object::V(v1) => match o2 {
-                    query::Object::L(l) => {
-                        self.get(&v1) == Some(&database::Object::L(l.to_string()))
-                    }
-                    query::Object::I(u) => {
-                        self.get(&v1) == Some(&database::Object::I(u.to_owned()))
-                    }
-                    query::Object::V(v2) => self.get(&v1) == self.get(&v2),
+                    query::Object::L(l) => self.get(v1) == Some(&database::Object::L(l.to_owned())),
+                    query::Object::I(u) => self.get(v1) == Some(&database::Object::I(u.to_owned())),
+                    query::Object::V(v2) => self.get(v1) == self.get(v2),
+                },
+            },
+            query::Condition::LT(o1, o2) => match o1 {
+                query::Object::L(l1) => match o2 {
+                    query::Object::L(l2) => l1 < l2,
+                    query::Object::I(_) => false,
+                    query::Object::V(v2) => match &self.get(v2) {
+                        Some(database::Object::L(l2)) => l1 < l2,
+                        _ => false,
+                    },
+                },
+                query::Object::I(_) => false,
+                query::Object::V(v1) => match o2 {
+                    query::Object::L(l2) => match &self.get(v1) {
+                        Some(database::Object::L(l1)) => l1 < l2,
+                        _ => false,
+                    },
+                    query::Object::I(_) => false,
+                    query::Object::V(v2) => match (&self.get(v1), &self.get(v2)) {
+                        (Some(database::Object::L(l1)), Some(database::Object::L(l2))) => l1 < l2,
+                        _ => false,
+                    },
+                },
+            },
+            query::Condition::GT(o1, o2) => match o1 {
+                query::Object::L(l1) => match o2 {
+                    query::Object::L(l2) => l1 > l2,
+                    query::Object::I(_) => false,
+                    query::Object::V(v2) => match &self.get(v2) {
+                        Some(database::Object::L(l2)) => l1 > l2,
+                        _ => false,
+                    },
+                },
+                query::Object::I(_) => false,
+                query::Object::V(v1) => match o2 {
+                    query::Object::L(l2) => match &self.get(v1) {
+                        Some(database::Object::L(l1)) => l1 > l2,
+                        _ => false,
+                    },
+                    query::Object::I(_) => false,
+                    query::Object::V(v2) => match (&self.get(v1), &self.get(v2)) {
+                        (Some(database::Object::L(l1)), Some(database::Object::L(l2))) => l1 > l2,
+                        _ => false,
+                    },
                 },
             },
             query::Condition::Bound(v) => self.contains_key(&v),

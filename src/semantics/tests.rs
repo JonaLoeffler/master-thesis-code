@@ -2,7 +2,7 @@ use std::error::Error;
 
 use crate::syntax::{database::Database, query::Query};
 
-use super::options::{EvalOptions, Semantics};
+use super::options::{EvalOptions, Optimizer};
 
 use super::evaluate;
 use super::results::QueryResult;
@@ -12,9 +12,7 @@ fn iter_evaluate(
     query: Query,
     options: Option<EvalOptions>,
 ) -> Result<QueryResult, Box<dyn Error>> {
-    let options = options
-        .unwrap_or_default()
-        .with_semantics(Semantics::Iterator);
+    let options = options.unwrap_or_default().with_optimizer(Optimizer::Fixed);
 
     evaluate(db, query, Some(options))
 }
@@ -24,9 +22,7 @@ fn coll_evaluate(
     query: Query,
     options: Option<EvalOptions>,
 ) -> Result<QueryResult, Box<dyn Error>> {
-    let options = options
-        .unwrap_or_default()
-        .with_semantics(Semantics::Collection);
+    let options = options.unwrap_or_default().with_optimizer(Optimizer::Fixed);
 
     evaluate(db, query, Some(options))
 }

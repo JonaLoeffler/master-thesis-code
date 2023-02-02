@@ -12,14 +12,19 @@ def run(query: str, dataset: str):
 
 
 def main():
-    with open("./lubm/queries-sparql.sparql") as file:
-        lines = [line for line in file.readlines() if line[0] != "#"]
-        queries = "".join(lines).split("\n\n")
+    try:
+        queryset = sys.argv[1]
+    except:
+        queryset = "./lubm/queries-sparql.sparql"
 
     try:
-        dataset = sys.argv[1]
+        dataset = sys.argv[2]
     except:
         dataset = "lubm"
+
+    with open(queryset) as file:
+        lines = [line for line in file.readlines() if line[0] != "#"]
+        queries = "".join(lines).split("\n\n")
 
     start = time.time()
     for i, query in enumerate(queries):

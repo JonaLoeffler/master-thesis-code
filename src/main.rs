@@ -39,14 +39,14 @@ struct Example {
     #[arg(short, long)]
     print: bool,
     /// Whether to use the optimizer
-    #[arg(short, long, value_enum, default_value_t = options::Optimizer::ARQPF)]
+    #[arg(short, long, value_enum, default_value_t = options::Optimizer::Arqpf)]
     optimizer: options::Optimizer,
-    /// Which semantics implementation to use
-    #[arg(short, long, value_enum, default_value_t = options::Semantics::Iterator)]
-    semantics: options::Semantics,
     /// Whether to abort just before query execution
     #[arg(short, long)]
     dryrun: bool,
+    /// Whether to examine FILTER conditions
+    #[arg(short, long)]
+    condition: bool,
 }
 
 #[derive(Args)]
@@ -60,14 +60,14 @@ struct Lubm {
     #[arg(short, long)]
     print: bool,
     /// Whether to use the optimizer
-    #[arg(short, long, value_enum, default_value_t = options::Optimizer::ARQPF)]
+    #[arg(short, long, value_enum, default_value_t = options::Optimizer::Arqpf)]
     optimizer: options::Optimizer,
-    /// Which semantics implementation to use
-    #[arg(short, long, value_enum, default_value_t = options::Semantics::Iterator)]
-    semantics: options::Semantics,
     /// Whether to abort just before query execution
     #[arg(short, long)]
     dryrun: bool,
+    /// Whether to examine FILTER conditions
+    #[arg(short, long)]
+    condition: bool,
 }
 
 #[derive(Args)]
@@ -83,14 +83,14 @@ struct Parse {
     #[arg(short, long)]
     print: bool,
     /// Whether to use the optimizer
-    #[arg(short, long, value_enum, default_value_t = options::Optimizer::ARQPF)]
+    #[arg(short, long, value_enum, default_value_t = options::Optimizer::Arqpf)]
     optimizer: options::Optimizer,
-    /// Which semantics implementation to use
-    #[arg(short, long, value_enum, default_value_t = options::Semantics::Iterator)]
-    semantics: options::Semantics,
     /// Whether to abort just before query execution
     #[arg(short, long)]
     dryrun: bool,
+    /// Whether to examine FILTER conditions
+    #[arg(short, long)]
+    condition: bool,
 }
 
 #[derive(Args)]
@@ -160,11 +160,12 @@ fn lubm(args: &Lubm) -> ExitResult {
     run_queries_on_db(
         filtered,
         database,
-        Some(EvalOptions::new(
-            args.semantics,
-            args.optimizer,
-            args.dryrun,
-        )),
+        Some(
+            EvalOptions::default()
+                .with_optimizer(args.optimizer)
+                .with_dryrun(args.dryrun)
+                .with_condition(args.condition),
+        ),
         args.print,
     )
 }
@@ -173,7 +174,6 @@ fn parse(args: &Parse) -> ExitResult {
     let queries = fs::read_to_string(&args.queries_path)
         .expect("Should have been able to read this file")
         .split("\n\n")
-        .into_iter()
         .map(|c| c.parse::<Query>())
         .collect::<Result<Vec<Query>, Box<dyn Error>>>()?;
 
@@ -184,12 +184,12 @@ fn parse(args: &Parse) -> ExitResult {
         .filter_map(|(i, q)| {
             if let Some(number) = args.number {
                 if i + 1 == number.clamp(1, queries.len()) {
-                    Some(q.clone())
+                    Some(q)
                 } else {
                     None
                 }
             } else {
-                Some(q.clone())
+                Some(q)
             }
         })
         .collect::<Vec<(String, Query)>>();
@@ -197,11 +197,12 @@ fn parse(args: &Parse) -> ExitResult {
     run_queries_on_db(
         filtered,
         parse_database(&args.database_path)?,
-        Some(EvalOptions::new(
-            args.semantics,
-            args.optimizer,
-            args.dryrun,
-        )),
+        Some(
+            EvalOptions::default()
+                .with_optimizer(args.optimizer)
+                .with_dryrun(args.dryrun)
+                .with_condition(args.condition),
+        ),
         args.print,
     )
 }
@@ -225,12 +226,12 @@ fn example(args: &Example) -> ExitResult {
         .filter_map(|(i, q)| {
             if let Some(number) = args.number {
                 if i + 1 == number.clamp(1, queries.len()) {
-                    Some(q.clone())
+                    Some(q)
                 } else {
                     None
                 }
             } else {
-                Some(q.clone())
+                Some(q)
             }
         })
         .collect();
@@ -238,11 +239,12 @@ fn example(args: &Example) -> ExitResult {
     run_queries_on_db(
         filtered,
         ex::databases::example1(),
-        Some(EvalOptions::new(
-            args.semantics,
-            args.optimizer,
-            args.dryrun,
-        )),
+        Some(
+            EvalOptions::default()
+                .with_optimizer(args.optimizer)
+                .with_dryrun(args.dryrun)
+                .with_condition(args.condition),
+        ),
         args.print,
     )
 }
@@ -251,7 +253,6 @@ fn explore(args: &Explore) -> ExitResult {
     let queries = fs::read_to_string(&args.queries_path)
         .expect("Should have been able to read this file")
         .split("\n\n")
-        .into_iter()
         .map(|c| c.parse::<Query>())
         .collect::<Result<Vec<Query>, Box<dyn Error>>>()?;
 
@@ -262,12 +263,12 @@ fn explore(args: &Explore) -> ExitResult {
         .filter_map(|(i, q)| {
             if let Some(number) = args.number {
                 if i + 1 == number.clamp(1, queries.len()) {
-                    Some(q.clone())
+                    Some(q)
                 } else {
                     None
                 }
             } else {
-                Some(q.clone())
+                Some(q)
             }
         })
         .collect::<Vec<(String, Query)>>();
@@ -275,40 +276,53 @@ fn explore(args: &Explore) -> ExitResult {
     let database = parse_database(&args.database_path)?;
 
     for (number, query) in filtered {
-        let results = semantics::explore::explore(query, &database)?;
+        match semantics::explore::explore(query, &database) {
+            Ok(results) => {
+                for (i, result) in results.iter().enumerate() {
+                    println!(
+                        "explore,{},{:?},{},{:.8},{:?},{},{:?},{},\"{:?}\",{},{},{},{}",
+                        number,
+                        i,
+                        result.size(),
+                        result.run_duration().unwrap_or_default().as_secs_f64(),
+                        args.queries_path,
+                        queries.len(),
+                        args.database_path,
+                        database.triples().len(),
+                        result.optimizers(),
+                        result.operations().as_ref().unwrap().joins,
+                        result.operations().as_ref().unwrap().scans,
+                        result.operations().as_ref().unwrap().disjunct_joins,
+                        result.operations().as_ref().unwrap().filters,
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to explore plans for query {number}");
+                log::error!("{e}");
 
-        for (i, result) in results.iter().enumerate() {
-            println!(
-                "explore,{},{:?},{},{:.8},{:?},{},{:?},{},\"{:?}\",{},{},{}",
-                number,
-                i,
-                result.size(),
-                result.duration().unwrap_or_default().as_secs_f32(),
-                args.queries_path,
-                queries.len(),
-                args.database_path,
-                database.triples().len(),
-                result.optimizers(),
-                result.operations().as_ref().unwrap().joins,
-                result.operations().as_ref().unwrap().scans,
-                result.operations().as_ref().unwrap().disjunct_joins,
-            );
-        }
+                continue;
+            }
+        };
     }
 
     Ok(())
 }
 
 fn parse_database(path: &PathBuf) -> Result<Database, Box<dyn Error>> {
-    match path.extension().and_then(OsStr::to_str) {
+    let mut db = match path.extension().and_then(OsStr::to_str) {
         Some("nt") => Database::from_ntriples_str(
             &fs::read_to_string(path).expect("Should have been able to read this file"),
-        ),
+        )?,
         Some("ttl") => Database::from_turtle_str(
             &fs::read_to_string(path).expect("Should have been able to read this file"),
-        ),
+        )?,
         _ => panic!("Cannot parse database"),
-    }
+    };
+
+    db.build_statistics(path)?;
+
+    Ok(db)
 }
 
 fn run_queries_on_db(
@@ -326,21 +340,33 @@ fn run_queries_on_db(
 
     let now = Instant::now();
     let mut duration = Duration::default();
+    let mut optimizing = Duration::default();
 
-    for (name, query) in queries.into_iter() {
+    for (name, query) in queries {
         let results = semantics::evaluate(&db, query, opts.to_owned())?;
 
-        duration += results.duration().unwrap_or_default();
+        duration += results.run_duration().unwrap_or_default();
+        optimizing += results.opt_duration().unwrap_or_default();
 
-        println!("Total rows for {}: {}", name, results.size());
+        println!(
+            "Total rows for {}: {}{}",
+            name,
+            results.size(),
+            if results.is_dryrun() {
+                " (Dry-Run)"
+            } else {
+                ""
+            }
+        );
 
         if print {
-            println!("{}", results);
+            println!("{results}");
         }
     }
 
     println!("Finished in {:.2?}", now.elapsed());
-    println!("Without optimizations {}", duration.as_secs_f32());
+    println!("Total time spent optimizing {optimizing:.2?}");
+    println!("Without optimizations {}", duration.as_secs_f64());
 
     Ok(())
 }

@@ -35,18 +35,18 @@ pub fn query1() -> Query {
         kind: SelectQuery(
             Variables::new(vec![Variable::new("?X".into())]),
             Expression::And(
-                Box::new(Expression::Triple {
-                    subject: Subject::V(Variable::new("?X".into())),
-                    predicate: Predicate::I("rdf:type".into()),
-                    object: Object::I("ub:GraduateStudent".into()),
-                }),
-                Box::new(Expression::Triple {
-                    subject: Subject::V(Variable::new("?X".into())),
-                    predicate: Predicate::I("ub:takesCourse".into()),
-                    object: Object::I(
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V(Variable::new("?X".into()))),
+                    Box::new(Predicate::I("rdf:type".into())),
+                    Box::new(Object::I("ub:GraduateStudent".into())),
+                )),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V(Variable::new("?X".into()))),
+                    Box::new(Predicate::I("ub:takesCourse".into())),
+                    Box::new(Object::I(
                         "<http://www.Department0.University0.edu/GraduateCourse0>".into(),
-                    ),
-                }),
+                    )),
+                )),
             ),
             SolutionModifier::default(),
         ),
@@ -69,41 +69,41 @@ pub fn query1() -> Query {
 /// ```
 ///
 pub fn query2() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V("?X".into()),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:GraduateStudent".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V("?X".into())),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:GraduateStudent".into())),
+    );
 
-    let t2 = Expression::Triple {
-        subject: Subject::V("?Y".into()),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:University".into()),
-    };
+    let t2 = Expression::Triple(
+        Box::new(Subject::V("?Y".into())),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:University".into())),
+    );
 
-    let t3 = Expression::Triple {
-        subject: Subject::V("?Z".into()),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Department".into()),
-    };
+    let t3 = Expression::Triple(
+        Box::new(Subject::V("?Z".into())),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Department".into())),
+    );
 
-    let t4 = Expression::Triple {
-        subject: Subject::V("?X".into()),
-        predicate: Predicate::I("ub:memberOf".into()),
-        object: Object::V("?Z".into()),
-    };
+    let t4 = Expression::Triple(
+        Box::new(Subject::V("?X".into())),
+        Box::new(Predicate::I("ub:memberOf".into())),
+        Box::new(Object::V("?Z".into())),
+    );
 
-    let t5 = Expression::Triple {
-        subject: Subject::V("?Z".into()),
-        predicate: Predicate::I("ub:subOrganizationOf".into()),
-        object: Object::V("?Y".into()),
-    };
+    let t5 = Expression::Triple(
+        Box::new(Subject::V("?Z".into())),
+        Box::new(Predicate::I("ub:subOrganizationOf".into())),
+        Box::new(Object::V("?Y".into())),
+    );
 
-    let t6 = Expression::Triple {
-        subject: Subject::V("?X".into()),
-        predicate: Predicate::I("ub:undergraduateDegreeFrom".into()),
-        object: Object::V("?Y".into()),
-    };
+    let t6 = Expression::Triple(
+        Box::new(Subject::V("?X".into())),
+        Box::new(Predicate::I("ub:undergraduateDegreeFrom".into())),
+        Box::new(Object::V("?Y".into())),
+    );
 
     Query {
         prologue: prologue(),
@@ -131,16 +131,18 @@ pub fn query2() -> Query {
 /// ```
 ///
 pub fn query3() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Publication".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:publicationAuthor".into()),
-        object: Object::I("<http://www.Department0.University0.edu/AssistantProfessor0>".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Publication".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:publicationAuthor".into())),
+        Box::new(Object::I(
+            "<http://www.Department0.University0.edu/AssistantProfessor0>".into(),
+        )),
+    );
 
     Query {
         prologue: prologue(),
@@ -167,31 +169,31 @@ pub fn query3() -> Query {
 /// ```
 ///
 pub fn query4() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Professor".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:worksFor".into()),
-        object: Object::I("<http://www.Department0.University0.edu>".into()),
-    };
-    let t3 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:name".into()),
-        object: Object::V(Variable::new("?Y1".into())),
-    };
-    let t4 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:emailAddress".into()),
-        object: Object::V(Variable::new("?Y2".into())),
-    };
-    let t5 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:telephone".into()),
-        object: Object::V(Variable::new("?Y3".into())),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Professor".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:worksFor".into())),
+        Box::new(Object::I("<http://www.Department0.University0.edu>".into())),
+    );
+    let t3 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:name".into())),
+        Box::new(Object::V(Variable::new("?Y1".into()))),
+    );
+    let t4 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:emailAddress".into())),
+        Box::new(Object::V(Variable::new("?Y2".into()))),
+    );
+    let t5 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:telephone".into())),
+        Box::new(Object::V(Variable::new("?Y3".into()))),
+    );
 
     Query {
         prologue: prologue(),
@@ -220,16 +222,16 @@ pub fn query4() -> Query {
 /// ```
 ///
 pub fn query5() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Person".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:memberOf".into()),
-        object: Object::I("<http://www.Department0.University0.edu>".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Person".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:memberOf".into())),
+        Box::new(Object::I("<http://www.Department0.University0.edu>".into())),
+    );
 
     Query {
         prologue: prologue(),
@@ -256,11 +258,11 @@ pub fn query6() -> Query {
         prologue: prologue(),
         kind: SelectQuery(
             Variables::new(vec![Variable::new("?X".into())]),
-            Expression::Triple {
-                subject: Subject::V(Variable::new("?X".into())),
-                predicate: Predicate::I("rdf:type".into()),
-                object: Object::I("ub:Student".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::V(Variable::new("?X".into()))),
+                Box::new(Predicate::I("rdf:type".into())),
+                Box::new(Object::I("ub:Student".into())),
+            ),
             SolutionModifier::default(),
         ),
     }
@@ -280,26 +282,28 @@ pub fn query6() -> Query {
 /// ```
 ///
 pub fn query7() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Student".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Course".into()),
-    };
-    let t3 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:takesCourse".into()),
-        object: Object::V(Variable::new("?Y".into())),
-    };
-    let t4 = Expression::Triple {
-        subject: Subject::I("<http://www.Department0.University0.edu/AssociateProfessor0>".into()),
-        predicate: Predicate::I("ub:teacherOf".into()),
-        object: Object::V(Variable::new("?Y".into())),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Student".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Course".into())),
+    );
+    let t3 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:takesCourse".into())),
+        Box::new(Object::V(Variable::new("?Y".into()))),
+    );
+    let t4 = Expression::Triple(
+        Box::new(Subject::I(
+            "<http://www.Department0.University0.edu/AssociateProfessor0>".into(),
+        )),
+        Box::new(Predicate::I("ub:teacherOf".into())),
+        Box::new(Object::V(Variable::new("?Y".into()))),
+    );
 
     Query {
         prologue: prologue(),
@@ -326,31 +330,31 @@ pub fn query7() -> Query {
 /// ```
 ///
 pub fn query8() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Student".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Department".into()),
-    };
-    let t3 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:memberOf".into()),
-        object: Object::V(Variable::new("?Y".into())),
-    };
-    let t4 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("ub:subOrganizationOf".into()),
-        object: Object::I("<http://www.University0.edu>".into()),
-    };
-    let t5 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:emailAddress".into()),
-        object: Object::V(Variable::new("?Z".into())),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Student".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Department".into())),
+    );
+    let t3 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:memberOf".into())),
+        Box::new(Object::V(Variable::new("?Y".into()))),
+    );
+    let t4 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("ub:subOrganizationOf".into())),
+        Box::new(Object::I("<http://www.University0.edu>".into())),
+    );
+    let t5 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:emailAddress".into())),
+        Box::new(Object::V(Variable::new("?Z".into()))),
+    );
 
     Query {
         prologue: prologue(),
@@ -382,36 +386,36 @@ pub fn query8() -> Query {
 /// ```
 ///
 pub fn query9() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Student".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Faculty".into()),
-    };
-    let t3 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Z".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Course".into()),
-    };
-    let t4 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:advisor".into()),
-        object: Object::V(Variable::new("?Y".into())),
-    };
-    let t5 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("ub:teacherOf".into()),
-        object: Object::V(Variable::new("?Z".into())),
-    };
-    let t6 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:takesCourse".into()),
-        object: Object::V(Variable::new("?Z".into())),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Student".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Faculty".into())),
+    );
+    let t3 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Z".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Course".into())),
+    );
+    let t4 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:advisor".into())),
+        Box::new(Object::V(Variable::new("?Y".into()))),
+    );
+    let t5 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("ub:teacherOf".into())),
+        Box::new(Object::V(Variable::new("?Z".into()))),
+    );
+    let t6 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:takesCourse".into())),
+        Box::new(Object::V(Variable::new("?Z".into()))),
+    );
 
     Query {
         prologue: prologue(),
@@ -439,16 +443,18 @@ pub fn query9() -> Query {
 /// ```
 ///
 pub fn query10() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Student".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:takesCourse".into()),
-        object: Object::I("<http://www.Department0.University0.edu/GraduateCourse0>".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Student".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:takesCourse".into())),
+        Box::new(Object::I(
+            "<http://www.Department0.University0.edu/GraduateCourse0>".into(),
+        )),
+    );
 
     Query {
         prologue: prologue(),
@@ -472,16 +478,16 @@ pub fn query10() -> Query {
 /// ```
 ///
 pub fn query11() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:ResearchGroup".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:subOrganizationOf".into()),
-        object: Object::I("<http://www.University0.edu>".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:ResearchGroup".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:subOrganizationOf".into())),
+        Box::new(Object::I("<http://www.University0.edu>".into())),
+    );
 
     Query {
         prologue: prologue(),
@@ -507,26 +513,26 @@ pub fn query11() -> Query {
 /// ```
 ///
 pub fn query12() -> Query {
-    let t1 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Chair".into()),
-    };
-    let t2 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("rdf:type".into()),
-        object: Object::I("ub:Department".into()),
-    };
-    let t3 = Expression::Triple {
-        subject: Subject::V(Variable::new("?X".into())),
-        predicate: Predicate::I("ub:worksFor".into()),
-        object: Object::V(Variable::new("?Y".into())),
-    };
-    let t4 = Expression::Triple {
-        subject: Subject::V(Variable::new("?Y".into())),
-        predicate: Predicate::I("ub:subOrganizationOf".into()),
-        object: Object::I("<http://www.University0.edu>".into()),
-    };
+    let t1 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Chair".into())),
+    );
+    let t2 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("rdf:type".into())),
+        Box::new(Object::I("ub:Department".into())),
+    );
+    let t3 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?X".into()))),
+        Box::new(Predicate::I("ub:worksFor".into())),
+        Box::new(Object::V(Variable::new("?Y".into()))),
+    );
+    let t4 = Expression::Triple(
+        Box::new(Subject::V(Variable::new("?Y".into()))),
+        Box::new(Predicate::I("ub:subOrganizationOf".into())),
+        Box::new(Object::I("<http://www.University0.edu>".into())),
+    );
 
     Query {
         prologue: prologue(),
@@ -555,16 +561,16 @@ pub fn query13() -> Query {
         kind: SelectQuery(
             Variables::new(vec![Variable::new("?X".into())]),
             Expression::And(
-                Box::new(Expression::Triple {
-                    subject: Subject::V(Variable::new("?X".into())),
-                    predicate: Predicate::I("rdf:type".into()),
-                    object: Object::I("ub:Person".into()),
-                }),
-                Box::new(Expression::Triple {
-                    subject: Subject::I("<http://www.University0.edu>".into()),
-                    predicate: Predicate::I("ub:hasAlumnus".into()),
-                    object: Object::V(Variable::new("?X".into())),
-                }),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::V(Variable::new("?X".into()))),
+                    Box::new(Predicate::I("rdf:type".into())),
+                    Box::new(Object::I("ub:Person".into())),
+                )),
+                Box::new(Expression::Triple(
+                    Box::new(Subject::I("<http://www.University0.edu>".into())),
+                    Box::new(Predicate::I("ub:hasAlumnus".into())),
+                    Box::new(Object::V(Variable::new("?X".into()))),
+                )),
             ),
             SolutionModifier::default(),
         ),
@@ -586,11 +592,11 @@ pub fn query14() -> Query {
         prologue: prologue(),
         kind: SelectQuery(
             Variables::new(vec![Variable::new("?X".into())]),
-            Expression::Triple {
-                subject: Subject::V(Variable::new("?X".into())),
-                predicate: Predicate::I("rdf:type".into()),
-                object: Object::I("ub:UndergraduateStudent".into()),
-            },
+            Expression::Triple(
+                Box::new(Subject::V(Variable::new("?X".into()))),
+                Box::new(Predicate::I("rdf:type".into())),
+                Box::new(Object::I("ub:UndergraduateStudent".into())),
+            ),
             SolutionModifier::default(),
         ),
     }

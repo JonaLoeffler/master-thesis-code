@@ -8,12 +8,15 @@ mod selectivity;
 #[cfg(test)]
 mod tests;
 
-use crate::semantics::{
-    operations::{
-        visitors::{optimize::Optimize, planner::Planner},
-        OperationVisitor,
+use crate::{
+    semantics::{
+        operations::{
+            visitors::{optimize::Optimize, planner::Planner},
+            OperationVisitor,
+        },
+        options::Optimizer,
     },
-    options::{Optimizer, Semantics},
+    syntax::expand::Expand,
 };
 
 use crate::syntax::{
@@ -22,17 +25,11 @@ use crate::syntax::{
 };
 
 use std::error::Error;
-use std::fmt::Display;
 use std::time::Instant;
 
-use self::operations::{
-    join::{CollJoin, IterJoin},
-    limit::{CollLimit, IterLimit},
-    minus::{CollMinus, IterMinus},
-    scan::{CollScan, IterScan},
-    Execute,
+use self::{
+    operations::visitors::condition::ConditionAnalyzer, options::EvalOptions, results::QueryResult,
 };
-use self::{options::EvalOptions, results::QueryResult};
 
 /**
 * Evaluate a query on a database
@@ -42,91 +39,61 @@ pub fn evaluate(
     query: query::Query,
     opts: Option<EvalOptions>,
 ) -> Result<QueryResult, Box<dyn Error>> {
-    log::info!(
-        "--- Evaluating query ---\n{} on {} triples",
-        query,
-        db.triples().len()
-    );
-
     let opts = opts.unwrap_or_default();
 
+    if opts.log {
+        log::warn!(
+            "--- Evaluating query ---\n{} on {} triples",
+            query,
+            db.triples().len()
+        );
+    }
+
+    let info = ConditionAnalyzer::new().visit(&query);
     let optimizer = match opts.optimizer {
         Optimizer::Off => selectivity::SelectivityEstimator::Off,
         Optimizer::Random => selectivity::SelectivityEstimator::Random,
         Optimizer::Fixed => selectivity::SelectivityEstimator::Fixed,
-        Optimizer::ARQPF => selectivity::SelectivityEstimator::ARQPF(db.summary()),
-        Optimizer::ARQPFJ => selectivity::SelectivityEstimator::ARQPFJ(db.summary()),
-        Optimizer::ARQVC => selectivity::SelectivityEstimator::ARQVC,
-        Optimizer::ARQVCP => selectivity::SelectivityEstimator::ARQVCP,
+        Optimizer::Arqpf => selectivity::SelectivityEstimator::Arqpf(db.summary()),
+        Optimizer::Arqpfc => selectivity::SelectivityEstimator::Arqpfc(db.summary(), &info),
+        Optimizer::Arqpfj => selectivity::SelectivityEstimator::Arqpfj(db.summary()),
+        Optimizer::Arqpfjc => selectivity::SelectivityEstimator::Arqpfjc(db.summary(), &info),
+        Optimizer::Arqvc => selectivity::SelectivityEstimator::Arqvc,
+        Optimizer::Arqvcp => selectivity::SelectivityEstimator::Arqvcp,
     };
 
-    let expanded = query.clone().expand()?;
+    let expanded = Expand::new(query.prologue.clone()).visit(&query)?;
+
+    let plan = Planner::new(db).visit(&expanded);
+
+    if opts.log {
+        log::warn!("--- Initial Query Plan ---\n{}\n", plan);
+    }
 
     let now = Instant::now();
 
-    let result = match opts.semantics {
-        Semantics::Iterator => {
-            let plan = Planner::iter(db).visit(&expanded);
-            log::info!("--- Initial Query Plan ---\n{}\n", plan);
+    let mut optimized = Optimize::new(optimizer.clone())
+        .with_condition(opts.condition)
+        .visit(&plan)?;
 
-            let optimized = Optimize::iter(optimizer.clone()).visit(&plan)?;
-            log::info!("--- Optimized Query Plan ---\n{}\n", optimized);
+    if opts.log {
+        log::warn!("--- Optimized Query Plan ---\n{}\n", optimized);
+    }
 
-            let mut final_plan = Box::new(optimized.clone()) as Box<dyn PlanResult>;
+    let optimization_duration = now.elapsed();
 
-            if opts.dryrun {
-                QueryResult::dryrun()
-            } else {
-                match query.kind {
-                    query::Type::SelectQuery(_, _, _) => final_plan.select(),
-                    query::Type::AskQuery(_, _) => final_plan.ask(),
-                }
-            }
-        }
-        Semantics::Collection => {
-            let plan = Planner::coll(db).visit(&expanded);
-            log::info!("--- Initial Query Plan ---\n{}\n", plan);
+    let now = Instant::now();
 
-            let optimized = Optimize::coll(optimizer.clone()).visit(&plan)?;
-            log::info!("--- Optimized Query Plan ---\n{}\n", optimized);
-
-            let mut final_plan = Box::new(optimized.clone()) as Box<dyn PlanResult>;
-
-            if opts.dryrun {
-                QueryResult::dryrun()
-            } else {
-                match query.kind {
-                    query::Type::SelectQuery(_, _, _) => final_plan.select(),
-                    query::Type::AskQuery(_, _) => final_plan.ask(),
-                }
-            }
+    let result = if opts.dryrun {
+        QueryResult::dryrun()
+    } else {
+        match query.kind {
+            query::Type::SelectQuery(_, _, _) => QueryResult::select(optimized.collect()),
+            query::Type::AskQuery(_, _) => QueryResult::ask(optimized.next().is_some()),
         }
     };
 
-    Ok(result.with_duration(now.elapsed()))
-}
-
-trait PlanResult: Display {
-    fn ask(&mut self) -> QueryResult;
-    fn select(&mut self) -> QueryResult;
-}
-
-impl<'a> PlanResult for operations::Operation<'a, IterScan<'a>, IterJoin, IterMinus, IterLimit> {
-    fn ask(&mut self) -> QueryResult {
-        QueryResult::ask(self.next().is_some())
-    }
-
-    fn select(&mut self) -> QueryResult {
-        QueryResult::select(self.collect())
-    }
-}
-
-impl<'a> PlanResult for operations::Operation<'a, CollScan, CollJoin, CollMinus, CollLimit> {
-    fn ask(&mut self) -> QueryResult {
-        QueryResult::ask(!self.execute().is_empty())
-    }
-
-    fn select(&mut self) -> QueryResult {
-        QueryResult::select(self.execute())
-    }
+    Ok(result
+        .with_run_duration(now.elapsed())
+        .with_optimization_duration(optimization_duration))
 }

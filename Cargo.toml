@@ -16,4 +16,8 @@ log = "0.4.17"
 dpc-pariter = "0.5.1"
 iter-progress = "0.8.0"
 rand = "0.8.5"
+serde = { version = "1.0.152", features = ["derive"] }
+ron = "0.8.0"
+regex = "1.7.1"
+ndhistogram = "0.8.0"
 

@@ -23,54 +23,60 @@ impl Add<Self> for OperationMeta {
         Self {
             joins: self.joins + rhs.joins,
             scans: self.scans + rhs.scans,
+            filters: self.filters + rhs.filters,
             disjunct_joins: self.disjunct_joins + rhs.disjunct_joins,
         }
     }
 }
 
-impl<'a, S, J, M, L> OperationVisitor<'a, S, J, M, L, OperationMeta> for Meta {
-    fn visit_scan(&mut self, _o: &'a Scan<S, J, M, L>) -> OperationMeta {
+impl<'a> OperationVisitor<'a, OperationMeta> for Meta {
+    fn visit_scan(&mut self, _o: &'a Scan) -> OperationMeta {
         OperationMeta {
-            joins: 0,
             scans: 1,
-            disjunct_joins: 0,
+            ..Default::default()
         }
     }
 
-    fn visit_join(&mut self, o: &'a Join<J, Operation<'a, S, J, M, L>>) -> OperationMeta {
-        OperationMeta {
+    fn visit_join(&mut self, o: &'a Join<Operation<'a>>) -> OperationMeta {
+        let meta = OperationMeta {
             joins: 1,
-            scans: 0,
-            disjunct_joins: if o.join_vars().is_empty() { 1 } else { 0 },
-        } + self.visit(&o.left)
-            + self.visit(&o.right)
+            disjunct_joins: usize::from(o.join_vars().is_empty()),
+            ..Default::default()
+        };
+
+        meta + self.visit(&o.left) + self.visit(&o.right)
     }
 
-    fn visit_projection(&mut self, o: &'a Projection<Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_projection(&mut self, o: &'a Projection<Operation<'a>>) -> OperationMeta {
         self.visit(&o.operation)
     }
 
-    fn visit_union(&mut self, o: &'a Union<Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_union(&mut self, o: &'a Union<Operation<'a>>) -> OperationMeta {
         self.visit(&o.left) + self.visit(&o.right)
     }
 
-    fn visit_filter(&mut self, o: &'a Filter<Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_filter(&mut self, o: &'a Filter<Operation<'a>>) -> OperationMeta {
+        let meta = OperationMeta {
+            filters: 1,
+            ..Default::default()
+        };
+
+        meta + self.visit(&o.operation)
+    }
+
+    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a>>) -> OperationMeta {
         self.visit(&o.operation)
     }
 
-    fn visit_leftjoin(&mut self, o: &'a LeftJoin<Operation<'a, S, J, M, L>>) -> OperationMeta {
-        self.visit(&o.operation)
-    }
-
-    fn visit_minus(&mut self, o: &'a Minus<M, Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_minus(&mut self, o: &'a Minus<Operation<'a>>) -> OperationMeta {
         self.visit(&o.left) + self.visit(&o.right)
     }
 
-    fn visit_offset(&mut self, o: &'a Offset<Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_offset(&mut self, o: &'a Offset<Operation<'a>>) -> OperationMeta {
         self.visit(&o.operation)
     }
 
-    fn visit_limit(&mut self, o: &'a Limit<L, Operation<'a, S, J, M, L>>) -> OperationMeta {
+    fn visit_limit(&mut self, o: &'a Limit<Operation<'a>>) -> OperationMeta {
         self.visit(&o.operation)
     }
 }

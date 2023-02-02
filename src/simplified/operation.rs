@@ -41,19 +41,3 @@ impl<'a> Iterator for Join<'a> {
         todo!()
     }
 }
-
-trait Execute {
-    fn execute(&self) -> MappingSet;
-}
-
-impl<'a> Execute for Scan<'a> {
-    fn execute(&self) -> MappingSet {
-        todo!()
-    }
-}
-
-impl<'a> Execute for Join<'a> {
-    fn execute(&self) -> MappingSet {
-        todo!()
-    }
-}

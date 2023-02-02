@@ -1,13 +1,10 @@
 use std::fmt;
 
-use crate::semantics::{
-    mapping::{Mapping, MappingSet},
-    selectivity::Selectivity,
-};
+use crate::semantics::{mapping::Mapping, selectivity::Selectivity};
 
-use super::Execute;
+use super::{visitors::printer::Printer, Operation, OperationVisitor};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Offset<O> {
     pub(crate) operation: Box<O>,
     pub(crate) offset: usize,
@@ -22,23 +19,9 @@ impl<O> Offset<O> {
     }
 }
 
-impl<O: fmt::Display> fmt::Display for Offset<O> {
+impl<'a> fmt::Display for Offset<Operation<'a>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("OFFSET {}", self.offset))?;
-
-        f.write_str(&format!("\n{}", self.operation).replace("\n", "\n  "))?;
-
-        Ok(())
-    }
-}
-
-impl<O: Execute> Execute for Offset<O> {
-    fn execute(&self) -> MappingSet {
-        self.operation
-            .execute()
-            .into_iter()
-            .skip(self.offset)
-            .collect()
+        f.write_str(&Printer::new().visit_offset(self))
     }
 }
 
